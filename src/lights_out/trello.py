@@ -55,6 +55,17 @@ class TrelloClient:
             self.list_ids(refresh=True)
         return created
 
+    # --- labels ----------------------------------------------------------
+    def ensure_labels(self, names: list[str], color: str = "sky") -> list[str]:
+        """Create any missing board labels (matched case-insensitively). Returns the names created."""
+        existing = {(lbl.get("name") or "").lower() for lbl in self._req("GET", f"/boards/{self.board_id}/labels")}
+        created = []
+        for name in names:
+            if name.lower() not in existing:
+                self._req("POST", "/labels", params={"name": name, "color": color, "idBoard": self.board_id})
+                created.append(name)
+        return created
+
     # --- cards -----------------------------------------------------------
     def cards_in(self, list_name: str) -> list[Ticket]:
         """Cards in a list, in board order (top first)."""

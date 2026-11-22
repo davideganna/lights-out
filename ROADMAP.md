@@ -18,8 +18,8 @@ The phases are in priority order. Each item is a candidate ticket.
 - [x] Own repository, git history, CI on every push (`make check` = ruff + pytest, Docker image build)
 - [x] MIT license, changelog, semantic versioning
 - [x] Line endings normalized (`.gitattributes`) so Windows and Linux checkouts agree
-- [ ] **Separate target repository for dogfooding.** lights-out should not work on its own repo by
-      default. Point `GITHUB_REPO` at a sandbox repo, or at lights-out itself only on purpose.
+- [x] Choose the target repository per card with a Trello label (`REPO_LABELS`); lights-out works on
+      itself only when a card carries its label
 - [ ] Graceful shutdown: on SIGTERM, finish or roll back the current card and put it back in the queue
       (today a stop mid-card relies on crash recovery at the next start)
 - [ ] `doctor` also checks Claude authentication
@@ -62,6 +62,5 @@ The phases are in priority order. Each item is a candidate ticket.
 ## Phase 6: Breadth
 
 - [ ] Jira adapter (the tracker is already isolated in one module)
-- [ ] Multiple target repositories per board
 - [ ] Parallel cards, each in its own container
 - [ ] More toolchains in the agent image, or a per-repository image

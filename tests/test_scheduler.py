@@ -59,7 +59,7 @@ def setup(tmp_path):
             trello_token="t",
             trello_board_id="b",
             github_token="",
-            github_repo="o/r",
+            repo_labels={"app": "o/app"},
             data_dir=tmp_path,
             max_day_usd=10,
         )

@@ -6,7 +6,16 @@ All notable changes to lights-out are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Repository routing by Trello label: `REPO_LABELS=label=owner/repo,...` lets one board drive several
+  repositories. Cards with no repository label, or with two, go to Needs Info with a comment listing the
+  valid labels (or to the optional `DEFAULT_REPO`). `setup-board` creates the labels, `doctor` checks
+  push access to every repository, `bootstrap` takes the target label, and the report shows each card's
+  repository.
+
 ### Changed
+- **Breaking:** `GITHUB_REPO` is replaced by `REPO_LABELS` (and the optional `DEFAULT_REPO`); lights-out
+  refuses to start with the old variable and explains the change.
 - Renamed the package from `ticket_agent` to `lights_out` and the command to `lights-out`.
 - `make check` and CI now lint (ruff) and test lights-out itself; CI also builds the Docker image.
 

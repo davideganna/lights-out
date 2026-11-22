@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .routing import parse_repo_labels
+
 # Secrets the orchestrator needs but the coding agent must never see. They are
 # removed from os.environ after loading, because the Claude Code subprocess
 # inherits os.environ.
@@ -14,6 +16,13 @@ _ORCHESTRATOR_SECRETS = ("GITHUB_TOKEN", "TRELLO_API_KEY", "TRELLO_TOKEN")
 
 class ConfigError(RuntimeError):
     pass
+
+
+def _repo_labels(spec: str) -> dict[str, str]:
+    try:
+        return parse_repo_labels(spec)
+    except ValueError as e:
+        raise ConfigError(str(e)) from e
 
 
 def _get(name: str, default: str | None = None, *, required: bool = False) -> str:
@@ -61,7 +70,9 @@ class Config:
     trello_token: str
     trello_board_id: str
     github_token: str
-    github_repo: str  # "owner/name"
+    # Trello label -> "owner/repo"; a card's label picks the repository it is about.
+    repo_labels: dict[str, str] = field(default_factory=dict)
+    default_repo: str = ""  # used for cards with no repository label; empty = ask for a label
     base_branch: str = "main"
     lists: Lists = field(default_factory=Lists)
 
@@ -108,10 +119,6 @@ class Config:
     def db_path(self) -> Path:
         return self.data_dir / "state.db"
 
-    @property
-    def repo_url(self) -> str:
-        return f"https://github.com/{self.github_repo}.git"
-
     @classmethod
     def from_env(cls, *, scrub_secrets: bool = True) -> Config:
         cfg = cls(
@@ -119,7 +126,8 @@ class Config:
             trello_token=_get("TRELLO_TOKEN", required=True),
             trello_board_id=_get("TRELLO_BOARD_ID", required=True),
             github_token=_get("GITHUB_TOKEN", required=True),
-            github_repo=_get("GITHUB_REPO", required=True),
+            repo_labels=_repo_labels(_get("REPO_LABELS", "")),
+            default_repo=_get("DEFAULT_REPO", ""),
             base_branch=_get("BASE_BRANCH", "main"),
             lists=Lists(
                 **{name: os.environ.get(f"LIST_{name.upper()}", default) for name, default in Lists().__dict__.items()}
@@ -144,8 +152,15 @@ class Config:
             git_author_email=_get("GIT_AUTHOR_EMAIL", "lights-out@users.noreply.github.com"),
             report_port=int(_get("REPORT_PORT", "8080")),
         )
-        if "/" not in cfg.github_repo:
-            raise ConfigError("GITHUB_REPO must look like 'owner/name'")
+        if os.environ.get("GITHUB_REPO"):
+            raise ConfigError(
+                "GITHUB_REPO was replaced by REPO_LABELS (e.g. REPO_LABELS=my-app=owner/my-app) "
+                "and the optional DEFAULT_REPO. Update your .env."
+            )
+        if not cfg.repo_labels and not cfg.default_repo:
+            raise ConfigError("Set REPO_LABELS (label=owner/repo, comma-separated) so cards can be routed")
+        if cfg.default_repo and "/" not in cfg.default_repo:
+            raise ConfigError("DEFAULT_REPO must look like 'owner/name'")
         if scrub_secrets:
             for name in _ORCHESTRATOR_SECRETS:
                 os.environ.pop(name, None)

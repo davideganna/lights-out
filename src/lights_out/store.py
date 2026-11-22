@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS runs (
     cost_usd REAL NOT NULL DEFAULT 0,
     pr_url TEXT,
     summary TEXT NOT NULL DEFAULT '',
-    error TEXT NOT NULL DEFAULT ''
+    error TEXT NOT NULL DEFAULT '',
+    repo TEXT NOT NULL DEFAULT ''
 );
 """
 
@@ -47,6 +48,7 @@ class Run:
     pr_url: str | None
     summary: str
     error: str
+    repo: str = ""
 
 
 class Store:
@@ -54,6 +56,10 @@ class Store:
         self._db = sqlite3.connect(path)
         self._db.row_factory = sqlite3.Row
         self._db.executescript(SCHEMA)
+        columns = {row[1] for row in self._db.execute("PRAGMA table_info(runs)")}
+        if "repo" not in columns:  # databases created before repository routing
+            self._db.execute("ALTER TABLE runs ADD COLUMN repo TEXT NOT NULL DEFAULT ''")
+            self._db.commit()
 
     def start(self, *, day: str, card_id: str, card_short_id: str, title: str, card_url: str) -> int:
         cur = self._db.execute(
@@ -63,6 +69,10 @@ class Store:
         )
         self._db.commit()
         return int(cur.lastrowid)
+
+    def set_repo(self, run_id: int, repo: str) -> None:
+        self._db.execute("UPDATE runs SET repo=? WHERE id=?", (repo, run_id))
+        self._db.commit()
 
     def stage(self, run_id: int, stage: str, cost_usd: float | None = None) -> None:
         if cost_usd is None:

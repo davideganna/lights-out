@@ -123,7 +123,7 @@ def cfg(tmp_path) -> Config:
         trello_token="t",
         trello_board_id="b",
         github_token="",
-        github_repo="o/r",
+        repo_labels={"app": "o/app", "site": "o/site"},
         data_dir=tmp_path / "data",
         check_command="grep -qx ok feature.txt",
         max_fix_attempts=2,
@@ -134,22 +134,36 @@ def cfg(tmp_path) -> Config:
 
 
 TICKET = Ticket(
-    id="card1", short_id="12", title="Add a feature file", description="Please.", url="https://trello.com/c/x"
+    id="card1",
+    short_id="12",
+    title="Add a feature file",
+    description="Please.",
+    url="https://trello.com/c/x",
+    labels=["App"],  # repository labels match case-insensitively
 )
 
 
-def make(cfg, origin, agents, github):
-    trello = FakeTrello(TICKET)
+def make(cfg, origin, agents, github, ticket=TICKET):
+    trello = FakeTrello(ticket)
     store = Store(cfg.db_path)
+    trello.repos = []  # repositories the pipeline asked GitHub / git for
+
+    def github_factory(repo):
+        trello.repos.append(("github", repo))
+        return github
+
+    def workspace_factory(t, route):
+        trello.repos.append(("workspace", route.repo))
+        # every route clones the local test origin; the route itself is asserted via trello.repos
+        return Workspace(cfg.workspaces_dir / t.id, repo_url=str(origin), base_branch="main", github_token="")
+
     pipe = Pipeline(
         cfg,
         trello,
-        github,
-        store,
+        github_factory=github_factory,
+        store=store,
         agents_factory=lambda d, budget: agents,
-        workspace_factory=lambda t: Workspace(
-            cfg.workspaces_dir / t.id, repo_url=str(origin), base_branch="main", github_token=""
-        ),
+        workspace_factory=workspace_factory,
     )
     return pipe, trello, store
 
@@ -254,3 +268,35 @@ async def test_disabled_stage_columns_are_skipped(cfg, origin):
     pipe, trello, store = make(cfg, origin, FakeAgents(), FakeGitHub())
     assert (await pipe.process(TICKET, "n", budget_usd=10)).status == "merged"
     assert trello.moves == ["In Progress", "Done"]
+
+
+# --- repository routing --------------------------------------------------------
+async def test_card_is_routed_to_the_repository_of_its_label(cfg, origin):
+    pipe, trello, store = make(cfg, origin, FakeAgents(), FakeGitHub())
+    assert (await pipe.process(TICKET, "n", budget_usd=10)).status == "merged"
+    assert trello.repos == [("github", "o/app"), ("workspace", "o/app")]
+    assert "`o/app`" in trello.comments[0]
+    assert store.day_runs("n")[0].repo == "o/app"
+
+
+@pytest.mark.parametrize(
+    "labels,expected",
+    [([], "no repository label"), (["urgent"], "no repository label"), (["app", "site"], "more than one")],
+)
+async def test_card_without_exactly_one_repo_label_goes_to_needs_info(cfg, origin, labels, expected):
+    ticket = Ticket(id="c2", short_id="2", title="t", description="d", url="u", labels=labels)
+    agents = FakeAgents()
+    pipe, trello, store = make(cfg, origin, agents, FakeGitHub(), ticket=ticket)
+    out = await pipe.process(ticket, "n", budget_usd=10)
+    assert out.status == "needs_info"
+    assert agents.calls == [] and trello.repos == []  # nothing cloned, no agent spend
+    assert trello.moves == ["Needs Info"]
+    assert expected in trello.comments[-1] and "**app**" in trello.comments[-1]
+
+
+async def test_default_repo_catches_unlabelled_cards(cfg, origin):
+    cfg.default_repo = "o/default"
+    ticket = Ticket(id="c3", short_id="3", title="t", description="d", url="u", labels=["urgent"])
+    pipe, trello, store = make(cfg, origin, FakeAgents(), FakeGitHub(), ticket=ticket)
+    assert (await pipe.process(ticket, "n", budget_usd=10)).status == "merged"
+    assert ("workspace", "o/default") in trello.repos
