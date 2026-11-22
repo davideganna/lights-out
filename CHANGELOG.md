@@ -14,8 +14,11 @@ All notable changes to lights-out are documented here. The format follows
   repository.
 
 ### Changed
-- Grouped modules into `core/`, `integrations/`, `agents/`, `orchestration/` and `reporting/`; the old
-  import paths (e.g. `lights_out.pipeline`) still work. `Dockerfile.test` moved to `docker/`.
+- Grouped modules into `core/`, `integrations/`, `agents/`, `orchestration/` and `reporting/`.
+  `Dockerfile.test` moved to `docker/`.
+- **Breaking:** the old top-level import paths (e.g. `lights_out.pipeline`,
+  `from lights_out.agents import ClaudeAgents`) have been removed; import from the new subpackages
+  instead (e.g. `lights_out.orchestration.pipeline`, `lights_out.agents.agents`).
 - **Breaking:** `GITHUB_REPO` is replaced by `REPO_LABELS` (and the optional `DEFAULT_REPO`); lights-out
   refuses to start with the old variable and explains the change.
 - Renamed the package from `ticket_agent` to `lights_out` and the command to `lights-out`.

@@ -2,35 +2,39 @@ import importlib
 
 import pytest
 
-from lights_out import _MOVED
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "config",
+        "models",
+        "routing",
+        "trello",
+        "github",
+        "pipeline",
+        "scheduler",
+        "workspace",
+        "store",
+        "report",
+        "prompts",
+    ],
+)
+def test_old_top_level_modules_are_gone(name):
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module(f"lights_out.{name}")
 
 
-@pytest.mark.parametrize(("old", "new"), sorted(_MOVED.items()))
-def test_old_import_paths_alias_new_modules(old, new):
-    assert importlib.import_module(f"lights_out.{old}") is importlib.import_module(new)
+def test_agents_package_does_not_reexport_names():
+    with pytest.raises(ImportError):
+        exec("from lights_out.agents import ClaudeAgents")
 
 
-def test_old_from_import_is_same_object():
-    from lights_out.pipeline import Pipeline
+def test_new_paths_import():
+    from lights_out.agents import prompts
+    from lights_out.agents.agents import ClaudeAgents
+    from lights_out.orchestration.pipeline import Pipeline
 
-    from lights_out.orchestration.pipeline import Pipeline as New
-
-    assert Pipeline is New
-
-
-def test_from_package_import_old_module():
-    from lights_out import prompts
-    from lights_out.agents import prompts as new
-
-    assert prompts is new
-
-
-def test_agents_package_reexports_public_names():
-    from lights_out.agents import AgentResult, BudgetExceeded, ClaudeAgents
-    from lights_out.agents.agents import ClaudeAgents as Real
-
-    assert ClaudeAgents is Real
-    assert AgentResult and BudgetExceeded
+    assert Pipeline and ClaudeAgents and prompts
 
 
 def test_bootstrap_templates_found():
