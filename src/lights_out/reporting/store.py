@@ -1,4 +1,4 @@
-"""SQLite record of every ticket run (feeds the morning report and crash recovery)."""
+"""SQLite record of every ticket run and its stage timeline (feeds the dashboard and crash recovery)."""
 
 from __future__ import annotations
 
@@ -25,6 +25,18 @@ CREATE TABLE IF NOT EXISTS runs (
     error TEXT NOT NULL DEFAULT '',
     repo TEXT NOT NULL DEFAULT ''
 );
+
+-- One row per stage change: when the stage started and the run's cumulative cost at that moment.
+-- The final row of a finished run has stage 'end'. Durations and per-stage cost are differences
+-- between consecutive rows.
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES runs(id),
+    stage TEXT NOT NULL,
+    at TEXT NOT NULL,
+    cost_usd REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS events_run ON events(run_id);
 """
 
 
@@ -77,9 +89,16 @@ class Store:
     def stage(self, run_id: int, stage: str, cost_usd: float | None = None) -> None:
         if cost_usd is None:
             self._db.execute("UPDATE runs SET stage=? WHERE id=?", (stage, run_id))
+            cost_usd = float(self._db.execute("SELECT cost_usd FROM runs WHERE id=?", (run_id,)).fetchone()[0])
         else:
             self._db.execute("UPDATE runs SET stage=?, cost_usd=? WHERE id=?", (stage, cost_usd, run_id))
+        self._event(run_id, stage, cost_usd)
         self._db.commit()
+
+    def _event(self, run_id: int, stage: str, cost_usd: float) -> None:
+        self._db.execute(
+            "INSERT INTO events (run_id, stage, at, cost_usd) VALUES (?, ?, ?, ?)", (run_id, stage, _now(), cost_usd)
+        )
 
     def finish(
         self,
@@ -95,6 +114,7 @@ class Store:
             "UPDATE runs SET status=?, finished_at=?, cost_usd=?, summary=?, error=?, pr_url=? WHERE id=?",
             (status, _now(), cost_usd, summary, error, pr_url, run_id),
         )
+        self._event(run_id, "end", cost_usd)
         self._db.commit()
 
     def running(self) -> list[Run]:
@@ -113,6 +133,13 @@ class Store:
         return int(
             self._db.execute("SELECT COUNT(*) FROM runs WHERE card_id=? AND day=?", (card_id, day)).fetchone()[0]
         )
+
+    def all_runs(self) -> list[Run]:
+        return self._rows("SELECT * FROM runs ORDER BY id")
+
+    def all_events(self) -> list[dict]:
+        rows = self._db.execute("SELECT run_id, stage, at, cost_usd FROM events ORDER BY run_id, id")
+        return [dict(r) for r in rows]
 
     def _rows(self, sql: str, params: tuple = ()) -> list[Run]:
         return [Run(**dict(r)) for r in self._db.execute(sql, params)]

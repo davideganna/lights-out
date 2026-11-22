@@ -212,6 +212,9 @@ async def test_failing_checks_are_fed_back_to_the_coder(cfg, origin):
     out = await pipe.process(TICKET, "n", budget_usd=10)
     assert out.status == "merged"
     assert agents.calls == ["triage", "implement", "fix", "review"]
+    stages = [e["stage"] for e in store.all_events()]
+    assert stages == ["workspace", "triage", "implement", "checks", "fix", "checks", "review 1", "deliver", "ci", "end"]
+    assert (cfg.reports_dir / "data.json").exists()  # the dashboard follows the card live
 
 
 async def test_review_rejection_triggers_revision(cfg, origin):

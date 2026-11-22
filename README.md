@@ -17,8 +17,11 @@ time, top first. For each card:
 5. **Deliver**: pushes the branch, opens a PR, waits for GitHub Actions, **squash-merges when CI
    is green**, comments the PR link on the card and moves it to **Done**.
 
-Whatever happens, the card gets a comment, and each day gets an HTML report at
-<http://localhost:8080/>.
+Whatever happens, the card gets a comment. A live **dashboard** at <http://localhost:8080/> shows what
+the agent is doing and how well it's doing it: runs per day by outcome, merge rate, spend and cost per
+merged card, time and cost per stage, where unmerged runs stopped, cost vs. duration, per-repository
+numbers, and every run with its stage timeline. Filter by time range, repository, outcome or text; every
+chart has a table view. It refreshes every 15 seconds and needs no internet access.
 
 Cards move through **Triaged → In Progress → Verifying → Reviewing → PR Opened → Done**;
 errors (checks or review that never pass, CI failures) go to **Failed** with a comment.
@@ -102,7 +105,8 @@ them (`doctor` checks this).
 | `core/routing.py` | card label → repository |
 | `orchestration/pipeline.py` | one card end to end |
 | `orchestration/scheduler.py` | queue watcher (polls Queued), budgets, recovery, report server |
-| `reporting/store.py` / `reporting/report.py` | SQLite run log and HTML reports |
+| `reporting/store.py` | SQLite run log and per-run stage timeline |
+| `reporting/report.py` / `templates/dashboard.html` | dashboard data (`data.json`) and the self-contained dashboard page |
 
 ## Development
 
