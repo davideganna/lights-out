@@ -6,11 +6,11 @@ from dataclasses import dataclass
 
 import pytest
 
-from ticket_agent.config import Config
-from ticket_agent.models import Ticket
-from ticket_agent.pipeline import Outcome
-from ticket_agent.scheduler import MAX_ATTEMPTS_PER_DAY, Scheduler, today
-from ticket_agent.store import Store
+from lights_out.config import Config
+from lights_out.models import Ticket
+from lights_out.pipeline import Outcome
+from lights_out.scheduler import MAX_ATTEMPTS_PER_DAY, Scheduler, today
+from lights_out.store import Store
 
 
 class FakeTrello:
@@ -38,8 +38,9 @@ class FakePipeline:
     leave_in_queue: bool = False
 
     async def process(self, card, day, budget_usd):
-        rid = self.store.start(day=day, card_id=card.id, card_short_id=card.short_id,
-                               title=card.title, card_url=card.url)
+        rid = self.store.start(
+            day=day, card_id=card.id, card_short_id=card.short_id, title=card.title, card_url=card.url
+        )
         self.store.finish(rid, status="merged", cost_usd=self.cost)
         if not self.leave_in_queue:
             self.trello.queued = [c for c in self.trello.queued if c.id != card.id]
@@ -53,13 +54,21 @@ def card(n: int) -> Ticket:
 @pytest.fixture
 def setup(tmp_path):
     def make(cards, **pipe_kw):
-        cfg = Config(trello_api_key="k", trello_token="t", trello_board_id="b", github_token="",
-                     github_repo="o/r", data_dir=tmp_path, max_day_usd=10)
+        cfg = Config(
+            trello_api_key="k",
+            trello_token="t",
+            trello_board_id="b",
+            github_token="",
+            github_repo="o/r",
+            data_dir=tmp_path,
+            max_day_usd=10,
+        )
         cfg.reports_dir.mkdir(parents=True, exist_ok=True)
         store = Store(tmp_path / "s.db")
         trello = FakeTrello(cards)
         pipe = FakePipeline(store, trello, **pipe_kw)
         return Scheduler(cfg, trello, store, pipe), trello, store
+
     return make
 
 

@@ -13,7 +13,7 @@ RUN useradd --create-home --shell /bin/bash agent \
  && git config --system safe.directory '*'
 
 WORKDIR /app
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 RUN pip install --no-cache-dir .
 
@@ -28,5 +28,5 @@ ENV DATA_DIR=/data \
     PYTHONUNBUFFERED=1
 VOLUME /data
 EXPOSE 8080
-ENTRYPOINT ["ticket-agent"]
+ENTRYPOINT ["lights-out"]
 CMD ["run"]

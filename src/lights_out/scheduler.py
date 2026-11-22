@@ -43,11 +43,16 @@ class Scheduler:
         """Runs still marked 'running' were cut off by a crash or restart: put their cards back."""
         for run in self.store.running():
             log.warning("Recovering interrupted run #%s (card #%s)", run.id, run.card_short_id)
-            self.store.finish(run.id, status="interrupted", cost_usd=run.cost_usd,
-                              error=f"Interrupted during stage '{run.stage}' (process restarted).")
+            self.store.finish(
+                run.id,
+                status="interrupted",
+                cost_usd=run.cost_usd,
+                error=f"Interrupted during stage '{run.stage}' (process restarted).",
+            )
             try:
-                self.trello.comment(run.card_id, "🤖 **ticket-agent** was interrupted while working on this; "
-                                    "it will retry.")
+                self.trello.comment(
+                    run.card_id, "🤖 **lights-out** was interrupted while working on this; it will retry."
+                )
                 self.trello.move(run.card_id, self.cfg.lists.ready)
             except Exception:  # noqa: BLE001
                 log.exception("Could not move card %s back", run.card_id)
@@ -59,10 +64,12 @@ class Scheduler:
                 return card
             if card.id not in self._skipped:
                 self._skipped.add(card.id)
-                log.warning("Card #%s already attempted %d times today; skipping", card.short_id,
-                            MAX_ATTEMPTS_PER_DAY)
-                self.trello.comment(card.id, f"🤖 **ticket-agent** already tried this card {MAX_ATTEMPTS_PER_DAY} "
-                                    "times today, so it won't pick it up again until tomorrow.")
+                log.warning("Card #%s already attempted %d times today; skipping", card.short_id, MAX_ATTEMPTS_PER_DAY)
+                self.trello.comment(
+                    card.id,
+                    f"🤖 **lights-out** already tried this card {MAX_ATTEMPTS_PER_DAY} "
+                    "times today, so it won't pick it up again until tomorrow.",
+                )
         return None
 
     def budget_left(self, day: str) -> float:

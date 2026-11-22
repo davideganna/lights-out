@@ -3,20 +3,28 @@
 from __future__ import annotations
 
 import json
+
 import httpx
 import pytest
 
-from ticket_agent.github import GitHubClient
-from ticket_agent.models import Comment, Ticket
-from ticket_agent.report import render_day
-from ticket_agent.store import Store
-from ticket_agent.trello import TrelloClient
-from ticket_agent.workspace import Workspace, WorkspaceError, run_as
+from lights_out.github import GitHubClient
+from lights_out.models import Comment, Ticket
+from lights_out.report import render_day
+from lights_out.store import Store
+from lights_out.trello import TrelloClient
+from lights_out.workspace import Workspace, WorkspaceError, run_as
 
 
 def test_ticket_branch_and_prompt():
-    t = Ticket(id="x", short_id="5", title="Add Dark-mode toggle!!", description="desc", url="u",
-               checklists=["AC:", "  - [ ] works"], comments=[Comment("Ann", "Use blue", "2026-11-20 10:00")])
+    t = Ticket(
+        id="x",
+        short_id="5",
+        title="Add Dark-mode toggle!!",
+        description="desc",
+        url="u",
+        checklists=["AC:", "  - [ ] works"],
+        comments=[Comment("Ann", "Use blue", "2026-11-20 10:00")],
+    )
     assert t.branch == "agent/5-add-dark-mode-toggle"
     p = t.as_prompt()
     assert "Use blue" in p and "[ ] works" in p and "desc" in p
@@ -44,20 +52,35 @@ def test_trello_cards_sorted_and_comments_oldest_first():
         if path.endswith("/boards/board/lists"):
             return httpx.Response(200, json=[{"id": "L1", "name": "Ready"}])
         if path.endswith("/lists/L1/cards"):
-            return httpx.Response(200, json=[
-                {"id": "b", "name": "second", "desc": "", "idShort": 2, "shortUrl": "u2", "labels": [], "pos": 20},
-                {"id": "a", "name": "first", "desc": "", "idShort": 1, "shortUrl": "u1", "labels": [], "pos": 10},
-            ])
+            return httpx.Response(
+                200,
+                json=[
+                    {"id": "b", "name": "second", "desc": "", "idShort": 2, "shortUrl": "u2", "labels": [], "pos": 20},
+                    {"id": "a", "name": "first", "desc": "", "idShort": 1, "shortUrl": "u1", "labels": [], "pos": 10},
+                ],
+            )
         if path.endswith("/cards/a"):
-            return httpx.Response(200, json={"id": "a", "name": "first", "desc": "d", "idShort": 1,
-                                             "shortUrl": "u1", "labels": [{"name": "feature"}]})
+            return httpx.Response(
+                200,
+                json={
+                    "id": "a",
+                    "name": "first",
+                    "desc": "d",
+                    "idShort": 1,
+                    "shortUrl": "u1",
+                    "labels": [{"name": "feature"}],
+                },
+            )
         if path.endswith("/cards/a/checklists"):
             return httpx.Response(200, json=[])
         if path.endswith("/cards/a/actions"):
-            return httpx.Response(200, json=[
-                {"date": "2026-11-21T10:00:00Z", "data": {"text": "newer"}, "memberCreator": {"fullName": "B"}},
-                {"date": "2026-11-20T10:00:00Z", "data": {"text": "older"}, "memberCreator": {"fullName": "A"}},
-            ])
+            return httpx.Response(
+                200,
+                json=[
+                    {"date": "2026-11-21T10:00:00Z", "data": {"text": "newer"}, "memberCreator": {"fullName": "B"}},
+                    {"date": "2026-11-20T10:00:00Z", "data": {"text": "older"}, "memberCreator": {"fullName": "A"}},
+                ],
+            )
         if path.endswith("/cards/a/actions/comments"):
             assert json.loads(req.content)["text"] == "hello"
             return httpx.Response(200, json={})
@@ -84,8 +107,7 @@ def _gh(responses: list[dict]) -> GitHubClient:
 
     http = httpx.Client(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
     now = [0.0]
-    return GitHubClient("t", "o/r", http=http, sleep=lambda s: now.__setitem__(0, now[0] + s),
-                        clock=lambda: now[0])
+    return GitHubClient("t", "o/r", http=http, sleep=lambda s: now.__setitem__(0, now[0] + s), clock=lambda: now[0])
 
 
 def run(status, conclusion=None, name="check"):
@@ -93,8 +115,7 @@ def run(status, conclusion=None, name="check"):
 
 
 def test_ci_waits_for_pending_then_succeeds():
-    gh = _gh([{"check_runs": []}, {"check_runs": [run("in_progress")]},
-              {"check_runs": [run("completed", "success")]}])
+    gh = _gh([{"check_runs": []}, {"check_runs": [run("in_progress")]}, {"check_runs": [run("completed", "success")]}])
     assert gh.wait_for_ci("sha", timeout_s=600, grace_s=120) == ("success", [])
 
 

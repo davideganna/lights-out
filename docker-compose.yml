@@ -1,5 +1,5 @@
 services:
-  ticket-agent:
+  lights-out:
     build: .
     env_file: .env
     volumes:

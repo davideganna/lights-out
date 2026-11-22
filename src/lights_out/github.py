@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Literal
 
 import httpx
 
@@ -23,8 +24,15 @@ class PullRequest:
 
 
 class GitHubClient:
-    def __init__(self, token: str, repo: str, *, http: httpx.Client | None = None,
-                 sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic):
+    def __init__(
+        self,
+        token: str,
+        repo: str,
+        *,
+        http: httpx.Client | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         self.repo = repo
         self._sleep = sleep
         self._clock = clock
@@ -45,8 +53,9 @@ class GitHubClient:
         return r.json() if r.content else None
 
     def create_pr(self, *, head: str, base: str, title: str, body: str) -> PullRequest:
-        pr = self._req("POST", f"/repos/{self.repo}/pulls",
-                       json={"head": head, "base": base, "title": title, "body": body})
+        pr = self._req(
+            "POST", f"/repos/{self.repo}/pulls", json={"head": head, "base": base, "title": title, "body": body}
+        )
         return PullRequest(number=pr["number"], url=pr["html_url"], head_sha=pr["head"]["sha"])
 
     def find_open_pr(self, head: str) -> PullRequest | None:
@@ -77,8 +86,7 @@ class GitHubClient:
             return "none", []
         if any(r["status"] != "completed" for r in runs):
             return "pending", []
-        failed = [r["name"] for r in runs
-                  if r["conclusion"] not in ("success", "neutral", "skipped")]
+        failed = [r["name"] for r in runs if r["conclusion"] not in ("success", "neutral", "skipped")]
         return ("failure" if failed else "success"), failed
 
     def wait_for_ci(self, sha: str, *, timeout_s: int, grace_s: int, poll_s: int = 20) -> tuple[CIResult, list[str]]:
@@ -98,8 +106,9 @@ class GitHubClient:
             self._sleep(poll_s)
 
     def merge(self, number: int, *, title: str) -> str:
-        res = self._req("PUT", f"/repos/{self.repo}/pulls/{number}/merge",
-                        json={"merge_method": "squash", "commit_title": title})
+        res = self._req(
+            "PUT", f"/repos/{self.repo}/pulls/{number}/merge", json={"merge_method": "squash", "commit_title": title}
+        )
         return res["sha"]
 
     def delete_branch(self, branch: str) -> None:

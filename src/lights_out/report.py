@@ -40,10 +40,12 @@ ul.days{padding:0;list-style:none}ul.days li{margin:6px 0}a{color:inherit}
 
 
 def _page(title: str, body: str) -> str:
-    return (f"<!doctype html><html lang=en><head><meta charset=utf-8>"
-            f"<meta name=viewport content='width=device-width,initial-scale=1'>"
-            f"<title>{html.escape(title)}</title><style>{CSS}</style></head>"
-            f"<body><main>{body}</main></body></html>")
+    return (
+        f"<!doctype html><html lang=en><head><meta charset=utf-8>"
+        f"<meta name=viewport content='width=device-width,initial-scale=1'>"
+        f"<title>{html.escape(title)}</title><style>{CSS}</style></head>"
+        f"<body><main>{body}</main></body></html>"
+    )
 
 
 def _run_html(r: Run) -> str:
@@ -69,7 +71,10 @@ def _run_html(r: Run) -> str:
 
 def render_day(store: Store, day: str) -> str:
     runs = store.day_runs(day)
-    count = lambda s: sum(1 for r in runs if r.status == s)
+
+    def count(status: str) -> int:
+        return sum(1 for r in runs if r.status == status)
+
     tiles = [
         (count("merged"), "merged"),
         (count("needs_info") + count("rejected"), "sent back"),
@@ -79,8 +84,10 @@ def render_day(store: Store, day: str) -> str:
     body = (
         f"<h1>Lights Out — {html.escape(day)}</h1>"
         f"<p class=sub>{len(runs)} ticket(s) processed · <a href='index.html'>all days</a></p>"
-        "<div class=tiles>" + "".join(f"<div class=tile><b>{v}</b><span>{k}</span></div>" for v, k in tiles)
-        + "</div>" + ("".join(_run_html(r) for r in runs) or "<p class=sub>Nothing processed yet.</p>")
+        "<div class=tiles>"
+        + "".join(f"<div class=tile><b>{v}</b><span>{k}</span></div>" for v, k in tiles)
+        + "</div>"
+        + ("".join(_run_html(r) for r in runs) or "<p class=sub>Nothing processed yet.</p>")
     )
     return _page(f"Lights Out {day}", body)
 
@@ -91,5 +98,6 @@ def write_reports(store: Store, out_dir: Path, day: str) -> Path:
     page.write_text(render_day(store, day))
     items = "".join(f"<li><a href='{n}.html'>{n}</a> · ${store.day_cost(n):.2f}</li>" for n in store.days())
     (out_dir / "index.html").write_text(
-        _page("Lights Out reports", f"<h1>Lights Out reports</h1><ul class=days>{items}</ul>"))
+        _page("Lights Out reports", f"<h1>Lights Out reports</h1><ul class=days>{items}</ul>")
+    )
     return page

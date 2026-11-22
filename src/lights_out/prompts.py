@@ -33,8 +33,11 @@ TRIAGE_SCHEMA = {
     "properties": {
         "decision": {"type": "string", "enum": ["proceed", "needs_info"]},
         "summary": {"type": "string", "description": "One or two sentences on what the ticket asks for."},
-        "questions": {"type": "array", "items": {"type": "string"},
-                      "description": "Questions for the ticket author (needs_info only)."},
+        "questions": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Questions for the ticket author (needs_info only).",
+        },
         "plan": {"type": "string", "description": "Implementation plan in markdown (proceed only)."},
     },
     "required": ["decision", "summary", "questions", "plan"],
