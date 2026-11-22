@@ -50,6 +50,10 @@ later, a webhook can replace the poll.
 - **Budgets:** `MAX_TICKET_USD` per card (enforced across all agent calls) and `MAX_DAY_USD`
   per day. A card re-queued after failing is retried at most 3 times a day.
 - **Crash recovery:** cards left mid-flight by a restart go back to Queued with a comment.
+  A normal stop (SIGTERM, Ctrl-C, `docker compose stop`) stops taking new cards and puts the
+  current card back right away if it is in an agent stage. Blocking stages (checks, and delivery: push,
+  PR, CI wait, merge) run to the end instead; if that takes longer than the 30 s `stop_grace_period`
+  (e.g. waiting for CI), Docker kills the process and the crash recovery above applies.
 
 ## Setup
 

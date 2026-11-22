@@ -14,7 +14,7 @@ from .core.routing import Route
 from .integrations.github import GitHubClient
 from .integrations.trello import TrelloClient
 from .orchestration.pipeline import Pipeline
-from .orchestration.scheduler import Scheduler, serve_reports
+from .orchestration.scheduler import Scheduler, run_until_signal, serve_reports
 from .orchestration.workspace import Workspace, bootstrap_repository
 from .reporting.report import write_reports
 from .reporting.store import Store
@@ -140,11 +140,11 @@ def main(argv: list[str] | None = None) -> int:
         print(write_reports(store, cfg.reports_dir, datetime.now().date().isoformat()))
         return 0
     if args.command == "run-once":
-        asyncio.run(scheduler.run_now())
+        asyncio.run(run_until_signal(scheduler.run_now(), stop=scheduler.stop))
         return 0
     if args.command == "run":
         serve_reports(cfg)
-        asyncio.run(scheduler.run_forever())
+        asyncio.run(run_until_signal(scheduler.run_forever(), stop=scheduler.stop))
     return 0
 
 

@@ -20,7 +20,7 @@ The phases are in priority order. Each item is a candidate ticket.
 - [x] Line endings normalized (`.gitattributes`) so Windows and Linux checkouts agree
 - [x] Choose the target repository per card with a Trello label (`REPO_LABELS`); lights-out works on
       itself only when a card carries its label
-- [ ] Graceful shutdown: on SIGTERM, finish or roll back the current card and put it back in the queue
+- [x] Graceful shutdown: on SIGTERM, finish or roll back the current card and put it back in the queue
       (today a stop mid-card relies on crash recovery at the next start)
 - [ ] `doctor` also checks Claude authentication
 

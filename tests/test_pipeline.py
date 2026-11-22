@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import signal
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +14,7 @@ from lights_out.agents.agents import AgentResult, BudgetExceeded, ReviewResult, 
 from lights_out.core.config import Config
 from lights_out.core.models import Ticket
 from lights_out.orchestration.pipeline import Pipeline
+from lights_out.orchestration.scheduler import run_until_signal
 from lights_out.orchestration.workspace import Workspace
 from lights_out.reporting.store import Store
 
@@ -303,3 +306,49 @@ async def test_default_repo_catches_unlabelled_cards(cfg, origin):
     pipe, trello, store = make(cfg, origin, FakeAgents(), FakeGitHub(), ticket=ticket)
     assert (await pipe.process(ticket, "n", budget_usd=10)).status == "merged"
     assert ("workspace", "o/default") in trello.repos
+
+
+class BlockingAgents(FakeAgents):
+    """implement() signals that it started, then waits forever (until cancelled)."""
+
+    def __init__(self):
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.never = asyncio.Event()
+
+    async def implement(self, ticket, plan, cwd):
+        self.entered.set()
+        await self.never.wait()
+
+
+async def test_cancellation_puts_card_back_in_queue_and_records_interrupted(cfg, origin):
+    agents, gh = BlockingAgents(), FakeGitHub()
+    pipe, trello, store = make(cfg, origin, agents, gh)
+    task = asyncio.create_task(pipe.process(TICKET, "2026-11-22", budget_usd=10))
+    await asyncio.wait_for(agents.entered.wait(), timeout=30)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert trello.moves[-1] == "Queued"
+    assert "shutting down" in trello.comments[-1] and "'implement'" in trello.comments[-1]
+    run = store.day_runs("2026-11-22")[0]
+    assert run.status == "interrupted" and "implement" in run.error
+    assert store.running() == []
+    assert not gh.prs
+
+
+class SignalDuringCI(FakeGitHub):
+    def wait_for_ci(self, sha, timeout_s, grace_s):
+        signal.raise_signal(signal.SIGTERM)  # a stop request arrives while delivery is blocking
+        return super().wait_for_ci(sha, timeout_s, grace_s)
+
+
+async def test_stop_during_delivery_finishes_the_card(cfg, origin):
+    gh = SignalDuringCI("success")
+    pipe, trello, store = make(cfg, origin, FakeAgents(), gh)
+    stopped = await asyncio.wait_for(run_until_signal(pipe.process(TICKET, "2026-11-22", budget_usd=10)), timeout=60)
+    assert stopped is True
+    assert gh.merged
+    assert trello.moves[-1] == "Done"
+    assert store.day_runs("2026-11-22")[0].status == "merged"
+    assert store.running() == []

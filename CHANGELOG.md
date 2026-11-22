@@ -12,6 +12,11 @@ All notable changes to lights-out are documented here. The format follows
   normal-vision separation in light and dark mode.
 
 ### Added
+- Graceful shutdown: on SIGTERM or SIGINT (`docker compose stop`, Ctrl-C) lights-out stops picking up cards,
+  puts the card in progress back in Queued with a comment and records the run as interrupted. Stages that
+  block (workspace setup, checks, and delivery: push, PR, CI wait, merge) can't be interrupted: the card
+  finishes them and no further card is picked up. If that outlasts `stop_grace_period` (raised to 30 s; a CI
+  wait can take up to `CI_TIMEOUT_S`), Docker sends SIGKILL and crash recovery handles the card at the next start.
 - Interactive dashboard on port 8080, replacing the per-day report pages: KPI tiles with comparison to the
   previous period (runs, merge rate, spend, cost per merged card, median time to merge, first-pass rate),
   runs and spend per day, outcomes, where unmerged runs stopped, time and cost per stage, cost vs. duration,

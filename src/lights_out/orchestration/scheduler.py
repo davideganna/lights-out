@@ -11,8 +11,11 @@ import asyncio
 import functools
 import http.server
 import logging
+import signal
 import threading
+from collections.abc import Coroutine
 from datetime import datetime
+from typing import Any
 
 from ..core.config import Config
 from ..integrations.trello import TrelloClient
@@ -37,6 +40,7 @@ class Scheduler:
         self.trello = trello
         self.store = store
         self.pipeline = pipeline
+        self.stop = threading.Event()  # set by run_until_signal: finish the current card, take no more
         self._skipped: set[str] = set()  # cards already reported as over the attempt limit
 
     def recover(self) -> None:
@@ -94,7 +98,7 @@ class Scheduler:
     async def run_now(self) -> None:
         """Process everything currently queued, then exit."""
         self.recover()
-        while await self.work_once():
+        while not self.stop.is_set() and await self.work_once():
             pass
         write_reports(self.store, self.cfg.reports_dir, today())
 
@@ -102,14 +106,48 @@ class Scheduler:
         self.recover()
         write_reports(self.store, self.cfg.reports_dir, today())
         log.info("Watching '%s' every %ds", self.cfg.lists.ready, self.cfg.poll_seconds)
-        while True:
+        while not self.stop.is_set():
             try:
                 worked = await self.work_once()
             except Exception:  # noqa: BLE001 - keep the watcher alive (e.g. a Trello outage)
                 log.exception("Watcher error")
                 worked = False
-            if not worked:  # after finishing a card, check the queue again straight away
+            if not worked and not self.stop.is_set():  # after finishing a card, check the queue again straight away
                 await asyncio.sleep(self.cfg.poll_seconds)
+
+
+async def run_until_signal(
+    coro: Coroutine[Any, Any, Any],
+    signals=(signal.SIGTERM, signal.SIGINT),
+    stop: threading.Event | None = None,
+) -> bool:
+    """Run `coro`; on SIGTERM/SIGINT set `stop`, cancel it and return True.
+
+    Returns False if the coroutine finished without a stop request. The plain Python
+    signal handler sets `stop` immediately, even while the loop is blocked in a synchronous
+    stage (checks, delivery), so the coroutine can see the request as soon as that stage
+    returns; the cancellation itself lands at the next await.
+    """
+    stop = stop if stop is not None else threading.Event()
+    loop = asyncio.get_running_loop()
+    task = asyncio.ensure_future(coro)
+
+    def on_signal(signum, frame) -> None:
+        stop.set()
+        loop.call_soon_threadsafe(task.cancel)
+
+    previous = {sig: signal.signal(sig, on_signal) for sig in signals}
+    try:
+        await task
+    except asyncio.CancelledError:
+        log.info("Shutdown requested; stopped cleanly")
+        return True
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+    if stop.is_set():
+        log.info("Shutdown requested; stopped cleanly")
+    return stop.is_set()
 
 
 class _QuietHandler(http.server.SimpleHTTPRequestHandler):
