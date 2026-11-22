@@ -7,12 +7,12 @@ import json
 import httpx
 import pytest
 
-from lights_out.github import GitHubClient
-from lights_out.models import Comment, Ticket
-from lights_out.report import render_day
-from lights_out.store import Store
-from lights_out.trello import TrelloClient
-from lights_out.workspace import Workspace, WorkspaceError, run_as
+from lights_out.core.models import Comment, Ticket
+from lights_out.integrations.github import GitHubClient
+from lights_out.integrations.trello import TrelloClient
+from lights_out.orchestration.workspace import Workspace, WorkspaceError, run_as
+from lights_out.reporting.report import render_day
+from lights_out.reporting.store import Store
 
 
 def test_ticket_branch_and_prompt():

@@ -90,22 +90,24 @@ them (`doctor` checks this).
 
 ## Layout
 
-| Module | Role |
+| Module (in `src/lights_out/`) | Role |
 |---|---|
-| `config.py` | env-based configuration, secret scrubbing |
-| `trello.py` | board adapter (cards, comments, moves) |
-| `github.py` | PRs, CI polling, merge |
-| `workspace.py` | clone/branch/commit/push, runs checks as the agent user, bootstraps empty repos |
-| `agents.py` / `prompts.py` | triage, coder and reviewer agents (Claude Agent SDK) |
-| `routing.py` | card label → repository |
-| `pipeline.py` | one card end to end |
-| `scheduler.py` | queue watcher (polls Queued), budgets, recovery, report server |
-| `store.py` / `report.py` | SQLite run log and HTML reports |
+| `cli.py` | command-line entry point |
+| `core/config.py` | env-based configuration, secret scrubbing |
+| `core/models.py` | ticket and comment data models |
+| `integrations/trello.py` | board adapter (cards, comments, moves) |
+| `integrations/github.py` | PRs, CI polling, merge |
+| `orchestration/workspace.py` | clone/branch/commit/push, runs checks as the agent user, bootstraps empty repos |
+| `agents/agents.py` / `agents/prompts.py` | triage, coder and reviewer agents (Claude Agent SDK) |
+| `core/routing.py` | card label → repository |
+| `orchestration/pipeline.py` | one card end to end |
+| `orchestration/scheduler.py` | queue watcher (polls Queued), budgets, recovery, report server |
+| `reporting/store.py` / `reporting/report.py` | SQLite run log and HTML reports |
 
 ## Development
 
 `make check` runs ruff and the test suite (it creates a local `.venv`). Without a local Python:
-`docker build -f Dockerfile.test -t lights-out-test . && docker run --rm lights-out-test`.
+`docker build -f docker/Dockerfile.test -t lights-out-test . && docker run --rm lights-out-test`.
 CI runs `make check` and builds the Docker image on every push and pull request.
 
 See [ROADMAP.md](ROADMAP.md) for what's next and [CHANGELOG.md](CHANGELOG.md) for what changed.

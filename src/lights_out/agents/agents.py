@@ -17,9 +17,9 @@ from claude_agent_sdk import (
     query,
 )
 
+from ..core.config import Config
+from ..core.models import Ticket
 from . import prompts
-from .config import Config
-from .models import Ticket
 
 log = logging.getLogger(__name__)
 

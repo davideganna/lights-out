@@ -6,11 +6,11 @@ from dataclasses import dataclass
 
 import pytest
 
-from lights_out.config import Config
-from lights_out.models import Ticket
-from lights_out.pipeline import Outcome
-from lights_out.scheduler import MAX_ATTEMPTS_PER_DAY, Scheduler, today
-from lights_out.store import Store
+from lights_out.core.config import Config
+from lights_out.core.models import Ticket
+from lights_out.orchestration.pipeline import Outcome
+from lights_out.orchestration.scheduler import MAX_ATTEMPTS_PER_DAY, Scheduler, today
+from lights_out.reporting.store import Store
 
 
 class FakeTrello:

@@ -8,16 +8,16 @@ import logging
 import sys
 from datetime import datetime
 
-from .agents import ClaudeAgents
-from .config import Config, ConfigError
-from .github import GitHubClient
-from .pipeline import Pipeline
-from .report import write_reports
-from .routing import Route
-from .scheduler import Scheduler, serve_reports
-from .store import Store
-from .trello import TrelloClient
-from .workspace import Workspace, bootstrap_repository
+from .agents.agents import ClaudeAgents
+from .core.config import Config, ConfigError
+from .core.routing import Route
+from .integrations.github import GitHubClient
+from .integrations.trello import TrelloClient
+from .orchestration.pipeline import Pipeline
+from .orchestration.scheduler import Scheduler, serve_reports
+from .orchestration.workspace import Workspace, bootstrap_repository
+from .reporting.report import write_reports
+from .reporting.store import Store
 
 
 def _workspace(cfg: Config, name: str, route: Route) -> Workspace:
