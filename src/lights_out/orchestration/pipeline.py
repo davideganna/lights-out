@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -134,6 +135,24 @@ class Pipeline:
                 status="interrupted",
                 cost_usd=agents.spent_usd,
                 error="Repository is empty; run `lights-out bootstrap`.",
+            )
+            raise
+        except asyncio.CancelledError:
+            # Service shutting down: put the card back and record the run, then keep unwinding.
+            try:
+                self.trello.comment(
+                    stub.id,
+                    f"{BOT} was stopped (service shutting down) during stage '{stage}'; "
+                    f"the card is back in **{lists.ready}** and will be retried.",
+                )
+                self.trello.move(stub.id, lists.ready)
+            except Exception:  # noqa: BLE001
+                log.exception("[#%s] could not put the card back during shutdown", stub.short_id)
+            self.store.finish(
+                run_id,
+                status="interrupted",
+                cost_usd=agents.spent_usd,
+                error=f"Interrupted during stage '{stage}' (shutdown).",
             )
             raise
         except Exception as e:  # noqa: BLE001 - every failure is reported on the card

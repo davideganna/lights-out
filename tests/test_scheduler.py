@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import signal
 from dataclasses import dataclass
 
 import pytest
@@ -9,7 +11,7 @@ import pytest
 from lights_out.core.config import Config
 from lights_out.core.models import Ticket
 from lights_out.orchestration.pipeline import Outcome
-from lights_out.orchestration.scheduler import MAX_ATTEMPTS_PER_DAY, Scheduler, today
+from lights_out.orchestration.scheduler import MAX_ATTEMPTS_PER_DAY, Scheduler, run_until_signal, today
 from lights_out.reporting.store import Store
 
 
@@ -103,3 +105,70 @@ async def test_recover_requeues_interrupted_runs(setup):
     sched.recover()
     assert trello.moves == [("c9", "Queued")]
     assert store.day_runs(today())[0].status == "interrupted"
+
+
+async def test_run_until_signal_stops_on_sigterm_and_restores_handler():
+    before = signal.getsignal(signal.SIGTERM)
+    asyncio.get_running_loop().call_later(0.01, signal.raise_signal, signal.SIGTERM)
+    assert await run_until_signal(asyncio.sleep(3600)) is True
+    assert signal.getsignal(signal.SIGTERM) == before
+
+
+async def test_run_until_signal_returns_false_when_coroutine_finishes():
+    async def quick():
+        return 1
+
+    assert await run_until_signal(quick()) is False
+
+
+async def test_sigterm_stops_scheduler_without_picking_up_another_card(setup):
+    sched, trello, store = setup([card(1), card(2)])
+    started: list[str] = []
+    entered = asyncio.Event()
+
+    async def blocking_process(c, day, budget_usd):
+        started.append(c.id)
+        entered.set()
+        await asyncio.sleep(3600)
+
+    sched.pipeline.process = blocking_process
+    loop = asyncio.get_running_loop()
+    task = asyncio.ensure_future(run_until_signal(sched.run_forever(), stop=sched.stop))
+    await asyncio.wait_for(entered.wait(), timeout=30)
+    loop.call_soon(signal.raise_signal, signal.SIGTERM)
+    assert await asyncio.wait_for(task, timeout=30) is True
+    assert started == ["c1"]
+
+
+async def test_signal_during_blocking_stage_finishes_card_and_picks_up_no_more(setup):
+    sched, trello, store = setup([card(1), card(2)])
+    started: list[str] = []
+
+    async def blocking_stage(c, day, budget_usd):
+        # No await: like _deliver, the whole card runs without yielding to the event loop.
+        started.append(c.id)
+        signal.raise_signal(signal.SIGTERM)
+        rid = store.start(day=day, card_id=c.id, card_short_id=c.short_id, title=c.title, card_url=c.url)
+        store.finish(rid, status="merged", cost_usd=1.0)
+        trello.queued = [q for q in trello.queued if q.id != c.id]
+        return Outcome("merged")
+
+    sched.pipeline.process = blocking_stage
+    assert await asyncio.wait_for(run_until_signal(sched.run_forever(), stop=sched.stop), timeout=30) is True
+    assert started == ["c1"]
+    assert [r.status for r in store.day_runs(today())] == ["merged"]
+    assert trello.comments == [] and trello.moves == []
+
+
+async def test_run_now_stops_after_signal_during_blocking_stage(setup):
+    sched, trello, store = setup([card(1), card(2)], leave_in_queue=True)
+    real = sched.pipeline.process
+
+    async def process_then_signal(c, day, budget_usd):
+        out = await real(c, day, budget_usd)
+        signal.raise_signal(signal.SIGTERM)
+        return out
+
+    sched.pipeline.process = process_then_signal
+    assert await asyncio.wait_for(run_until_signal(sched.run_now(), stop=sched.stop), timeout=30) is True
+    assert [r.card_short_id for r in store.day_runs(today())] == ["1"]
