@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from lights_out.agents import AgentResult, BudgetExceeded, ReviewResult, TriageResult
+from lights_out.agents.agents import AgentResult, BudgetExceeded, ReviewResult, TriageResult
 from lights_out.core.config import Config
 from lights_out.core.models import Ticket
 from lights_out.orchestration.pipeline import Pipeline
