@@ -12,6 +12,7 @@ from .agents import AgentError, AgentsProtocol, BudgetExceeded
 from .config import Config
 from .github import GitHubClient
 from .models import Ticket
+from .routing import Route, RoutingError, resolve
 from .store import Store
 from .trello import TrelloClient
 from .workspace import EmptyRepositoryError, Workspace
@@ -41,14 +42,14 @@ class Pipeline:
         self,
         cfg: Config,
         trello: TrelloClient,
-        github: GitHubClient,
+        github_factory: Callable[[str], GitHubClient],
         store: Store,
         agents_factory: Callable[[Path, float], AgentsProtocol],
-        workspace_factory: Callable[[Ticket], Workspace],
+        workspace_factory: Callable[[Ticket, Route], Workspace],
     ):
         self.cfg = cfg
         self.trello = trello
-        self.github = github
+        self.github_factory = github_factory
         self.store = store
         self.agents_factory = agents_factory
         self.workspace_factory = workspace_factory
@@ -70,11 +71,17 @@ class Pipeline:
             log.info("[#%s] %s", stub.short_id, name)
 
         try:
-            self.trello.comment(stub.id, f"{BOT} picked this up (run #{run_id}).")
             ticket = self.trello.get_ticket(stub.id)
+            try:
+                route = resolve(ticket, self.cfg.repo_labels, self.cfg.default_repo)
+            except RoutingError as e:
+                return self._send_back(ticket, run_id, agents.spent_usd, str(e), [])
+            self.store.set_repo(run_id, route.repo)
+            self.trello.comment(stub.id, f"{BOT} picked this up (run #{run_id}), working on `{route.repo}`.")
+            github = self.github_factory(route.repo)
 
             set_stage("workspace")
-            ws = self.workspace_factory(ticket)
+            ws = self.workspace_factory(ticket, route)
             ws.prepare(ticket)
 
             set_stage("triage")
@@ -116,7 +123,7 @@ class Pipeline:
                 session = await self._make_checks_pass(agents, ws, session, ticket.id)
 
             set_stage("deliver")
-            return self._deliver(ticket, ws, run_id, agents.spent_usd, summary, review.summary, triage.plan)
+            return self._deliver(ticket, ws, github, run_id, agents.spent_usd, summary, review.summary, triage.plan)
 
         except EmptyRepositoryError:
             # Not the ticket's fault: put it back (it stays queued until the repo is fixed).
@@ -174,19 +181,28 @@ class Pipeline:
 
     def _send_back(self, ticket: Ticket, run_id: int, cost: float, summary: str, questions: list[str]) -> Outcome:
         lists = self.cfg.lists
-        qs = "\n".join(f"{i}. {q}" for i, q in enumerate(questions, 1))
+        qs = "".join(f"{i}. {q}\n" for i, q in enumerate(questions, 1))
+        reply = "Reply in a comment, then move" if questions else "Fix the card, then move"
         self.trello.comment(
             ticket.id,
-            f"{BOT} needs more information before implementing this.\n\n"
-            f"{summary}\n\n{qs}\n\nReply in a comment, then move the card back to "
-            f"**{lists.ready}**.",
+            f"{BOT} needs more information before implementing this.\n\n{summary}\n\n"
+            + (f"{qs}\n" if qs else "")
+            + f"{reply} the card back to **{lists.ready}**.",
         )
         self.trello.move(ticket.id, lists.needs_info)
         self.store.finish(run_id, status="needs_info", cost_usd=cost, summary=summary)
         return Outcome("needs_info", summary=summary)
 
     def _deliver(
-        self, ticket: Ticket, ws: Workspace, run_id: int, cost: float, summary: str, review_summary: str, plan: str
+        self,
+        ticket: Ticket,
+        ws: Workspace,
+        github: GitHubClient,
+        run_id: int,
+        cost: float,
+        summary: str,
+        review_summary: str,
+        plan: str,
     ) -> Outcome:
         lists, cfg = self.cfg.lists, self.cfg
         ws.kill_agent_processes()
@@ -197,17 +213,17 @@ class Pipeline:
             f"## Review\n{review_summary}\n\n<details><summary>Plan</summary>\n\n{plan}\n</details>\n\n"
             f"_Opened by lights-out. Merged automatically once CI passes._"
         )
-        pr = self.github.open_or_update_pr(
+        pr = github.open_or_update_pr(
             head=ticket.branch, base=cfg.base_branch, title=ticket.title, body=body, head_sha=sha
         )
         self._move(ticket.id, lists.pr_opened)
         self.trello.comment(ticket.id, f"{BOT} opened {pr.url}; waiting for CI.")
         self.store.stage(run_id, "ci", cost)
-        ci, failed = self.github.wait_for_ci(sha, timeout_s=cfg.ci_timeout_s, grace_s=cfg.ci_grace_s)
+        ci, failed = github.wait_for_ci(sha, timeout_s=cfg.ci_timeout_s, grace_s=cfg.ci_grace_s)
 
         if ci == "success" or (ci == "none" and cfg.merge_without_ci):
-            self.github.merge(pr.number, title=f"{ticket.title} (#{pr.number})")
-            self.github.delete_branch(ticket.branch)
+            github.merge(pr.number, title=f"{ticket.title} (#{pr.number})")
+            github.delete_branch(ticket.branch)
             self.trello.comment(ticket.id, f"{BOT} implemented and merged this: {pr.url}\n\n{summary}")
             self.trello.move(ticket.id, lists.done)
             self.store.finish(run_id, status="merged", cost_usd=cost, summary=summary, pr_url=pr.url)

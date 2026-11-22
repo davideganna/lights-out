@@ -52,6 +52,8 @@ def _run_html(r: Run) -> str:
     label, cls = STATUS.get(r.status, (r.status, "muted"))
     e = html.escape
     links = [f"<a href='{e(r.card_url)}'>Trello card</a>"]
+    if r.repo:
+        links.insert(0, f"<a href='https://github.com/{e(r.repo)}'>{e(r.repo)}</a>")
     if r.pr_url:
         links.append(f"<a href='{e(r.pr_url)}'>Pull request</a>")
     started = r.started_at[11:16]

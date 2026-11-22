@@ -54,20 +54,36 @@ later, a webhook can replace the poll.
    - `ANTHROPIC_API_KEY`, or `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`.
    - Trello: get the API key at <https://trello.com/power-ups/admin> (create a Power-Up, then
      "API key"), then generate a token from the link on that page.
-   - `GITHUB_REPO`: the repository lights-out should work on (yours, not lights-out itself).
-   - GitHub: a fine-grained token limited to that repository with *Contents*, *Pull requests* and
+   - `REPO_LABELS`: which repositories lights-out may work on, keyed by Trello label, e.g.
+     `REPO_LABELS=web=acme/website,api=acme/api`. See [Choosing the repository](#choosing-the-repository).
+   - GitHub: a fine-grained token limited to those repositories with *Contents*, *Pull requests* and
      *Workflows* set to read/write and *Checks* set to read.
    - `TRELLO_BOARD_ID`: the board whose *Queued* column drives the work.
 2. Build and check: `docker compose build && docker compose run --rm lights-out doctor`
-3. Create any missing board columns: `docker compose run --rm lights-out setup-board`
-4. If the repository is empty, give it a first commit (CI workflow running `make check`, a Makefile
-   and a `CLAUDE.md` with conventions): `docker compose run --rm lights-out bootstrap`
+3. Create any missing board columns and repository labels: `docker compose run --rm lights-out setup-board`
+4. If a repository is empty, give it a first commit (CI workflow running `make check`, a Makefile
+   and a `CLAUDE.md` with conventions): `docker compose run --rm lights-out bootstrap <label>`
 5. Start it: `docker compose up -d`. From then on, moving a card to **Queued** starts the agent.
    (`docker compose run --rm lights-out run-once` processes what's queued now and exits.)
 
+## Choosing the repository
+
+The board decides which repository each card is about, through labels. `REPO_LABELS` maps a label
+to a repository:
+
+```
+REPO_LABELS=web=acme/website,api=acme/api
+```
+
+A card labelled **web** is implemented in `acme/website`. Other labels (bug, urgent, …) are ignored.
+A card with no repository label, or with two, goes to **Needs Info** with a comment listing the valid
+labels, unless `DEFAULT_REPO` is set, in which case unlabelled cards go there. Only repositories
+listed in `REPO_LABELS` or `DEFAULT_REPO` can ever be touched, and the GitHub token must cover all of
+them (`doctor` checks this).
+
 ## Writing good cards
 
-- One piece of work per card, small enough for one PR.
+- One piece of work per card, small enough for one PR, with exactly one repository label.
 - Describe the expected behaviour; put acceptance criteria in a checklist.
 - If the agent asks questions, answer them in a comment and move the card back to Queued. It reads
   the whole comment thread.
@@ -81,6 +97,7 @@ later, a webhook can replace the poll.
 | `github.py` | PRs, CI polling, merge |
 | `workspace.py` | clone/branch/commit/push, runs checks as the agent user, bootstraps empty repos |
 | `agents.py` / `prompts.py` | triage, coder and reviewer agents (Claude Agent SDK) |
+| `routing.py` | card label → repository |
 | `pipeline.py` | one card end to end |
 | `scheduler.py` | queue watcher (polls Queued), budgets, recovery, report server |
 | `store.py` / `report.py` | SQLite run log and HTML reports |

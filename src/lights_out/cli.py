@@ -13,16 +13,17 @@ from .config import Config, ConfigError
 from .github import GitHubClient
 from .pipeline import Pipeline
 from .report import write_reports
+from .routing import Route
 from .scheduler import Scheduler, serve_reports
 from .store import Store
 from .trello import TrelloClient
 from .workspace import Workspace, bootstrap_repository
 
 
-def _workspace(cfg: Config, name: str) -> Workspace:
+def _workspace(cfg: Config, name: str, route: Route) -> Workspace:
     return Workspace(
         cfg.workspaces_dir / name,
-        repo_url=cfg.repo_url,
+        repo_url=route.url,
         base_branch=cfg.base_branch,
         github_token=cfg.github_token,
         agent_user=cfg.agent_user,
@@ -33,17 +34,34 @@ def _workspace(cfg: Config, name: str) -> Workspace:
 
 def build(cfg: Config) -> tuple[TrelloClient, Store, Scheduler]:
     trello = TrelloClient(cfg.trello_api_key, cfg.trello_token, cfg.trello_board_id)
-    github = GitHubClient(cfg.github_token, cfg.github_repo)
     store = Store(cfg.db_path)
     pipeline = Pipeline(
         cfg,
         trello,
-        github,
-        store,
+        github_factory=lambda repo: GitHubClient(cfg.github_token, repo),
+        store=store,
         agents_factory=lambda transcript_dir, budget: ClaudeAgents(cfg, transcript_dir, budget),
-        workspace_factory=lambda t: _workspace(cfg, t.id),
+        workspace_factory=lambda t, route: _workspace(cfg, t.id, route),
     )
     return trello, store, Scheduler(cfg, trello, store, pipeline)
+
+
+def _targets(cfg: Config) -> list[tuple[str, str]]:
+    """(label, repo) for every repository lights-out may work on."""
+    targets = sorted(cfg.repo_labels.items())
+    if cfg.default_repo:
+        targets.append(("default", cfg.default_repo))
+    return targets
+
+
+def _route_for(cfg: Config, name: str) -> Route:
+    """Resolve a bootstrap target given as a label or as owner/repo."""
+    if name.lower() in cfg.repo_labels:
+        return Route(label=name.lower(), repo=cfg.repo_labels[name.lower()])
+    for label, repo in _targets(cfg):
+        if repo.lower() == name.lower():
+            return Route(label=label, repo=repo)
+    raise ConfigError(f"{name!r} is not in REPO_LABELS or DEFAULT_REPO")
 
 
 def cmd_doctor(cfg: Config) -> int:
@@ -59,17 +77,18 @@ def cmd_doctor(cfg: Config) -> int:
     except Exception as e:  # noqa: BLE001
         ok = False
         print(f"Trello: FAILED: {e}")
-    github = GitHubClient(cfg.github_token, cfg.github_repo)
-    try:
-        repo = github._req("GET", f"/repos/{cfg.github_repo}")
-        perms = repo.get("permissions", {})
-        print(f"GitHub: {repo['full_name']} (push={perms.get('push')}, default branch={repo['default_branch']})")
-        if not perms.get("push"):
+    for label, repo_name in _targets(cfg):
+        github = GitHubClient(cfg.github_token, repo_name)
+        try:
+            repo = github._req("GET", f"/repos/{repo_name}")
+            perms = repo.get("permissions", {})
+            print(f"GitHub [{label}]: {repo['full_name']} (push={perms.get('push')}, default={repo['default_branch']})")
+            if not perms.get("push"):
+                ok = False
+                print("  token cannot push to this repository")
+        except Exception as e:  # noqa: BLE001
             ok = False
-            print("  token cannot push to this repository")
-    except Exception as e:  # noqa: BLE001
-        ok = False
-        print(f"GitHub: FAILED: {e}")
+            print(f"GitHub [{label}]: {repo_name} FAILED: {e}")
     print("OK" if ok else "Problems found")
     return 0 if ok else 1
 
@@ -80,8 +99,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("run", help="daemon: process cards as soon as they are queued, serve reports")
     sub.add_parser("run-once", help="process every Queued card now, then exit")
     sub.add_parser("doctor", help="check Trello and GitHub credentials")
-    sub.add_parser("setup-board", help="create missing Trello lists")
-    sub.add_parser("bootstrap", help="give an empty repository its first commit (CI, Makefile, CLAUDE.md)")
+    sub.add_parser("setup-board", help="create missing Trello lists and repository labels")
+    boot = sub.add_parser("bootstrap", help="give an empty repository its first commit (CI, Makefile, CLAUDE.md)")
+    boot.add_argument("repo", help="repository label or owner/repo (must be in REPO_LABELS or DEFAULT_REPO)")
     sub.add_parser("report", help="regenerate today's HTML report")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
@@ -102,9 +122,16 @@ def main(argv: list[str] | None = None) -> int:
         trello = TrelloClient(cfg.trello_api_key, cfg.trello_token, cfg.trello_board_id)
         created = trello.ensure_lists(cfg.lists.all())
         print(f"Created lists: {created}" if created else "All lists already exist.")
+        labels = trello.ensure_labels(sorted(cfg.repo_labels))
+        print(f"Created labels: {labels}" if labels else "All repository labels already exist.")
         return 0
     if args.command == "bootstrap":
-        done = bootstrap_repository(_workspace(cfg, "_bootstrap"))
+        try:
+            route = _route_for(cfg, args.repo)
+        except ConfigError as e:
+            print(f"Configuration error: {e}", file=sys.stderr)
+            return 2
+        done = bootstrap_repository(_workspace(cfg, "_bootstrap", route))
         print("Pushed the initial commit." if done else "Repository already has commits; nothing to do.")
         return 0
 
