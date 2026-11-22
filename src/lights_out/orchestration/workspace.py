@@ -14,7 +14,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .models import Ticket
+from ..core.models import Ticket
 
 
 class WorkspaceError(RuntimeError):
@@ -171,7 +171,7 @@ class Workspace:
         shutil.rmtree(self.path, ignore_errors=True)
 
 
-TEMPLATES = Path(__file__).parent / "templates" / "bootstrap"
+TEMPLATES = Path(__file__).resolve().parent.parent / "templates" / "bootstrap"
 
 
 def bootstrap_repository(ws: Workspace) -> bool:

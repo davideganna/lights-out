@@ -7,14 +7,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import prompts
-from .agents import AgentError, AgentsProtocol, BudgetExceeded
-from .config import Config
-from .github import GitHubClient
-from .models import Ticket
-from .routing import Route, RoutingError, resolve
-from .store import Store
-from .trello import TrelloClient
+from ..agents import prompts
+from ..agents.agents import AgentError, AgentsProtocol, BudgetExceeded
+from ..core.config import Config
+from ..core.models import Ticket
+from ..core.routing import Route, RoutingError, resolve
+from ..integrations.github import GitHubClient
+from ..integrations.trello import TrelloClient
+from ..reporting.store import Store
 from .workspace import EmptyRepositoryError, Workspace
 
 log = logging.getLogger(__name__)

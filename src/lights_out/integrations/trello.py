@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import httpx
 
-from .models import Comment, Ticket
+from ..core.models import Comment, Ticket
 
 API = "https://api.trello.com/1"
 

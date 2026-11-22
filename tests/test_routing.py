@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from lights_out.config import Config, ConfigError
-from lights_out.models import Ticket
-from lights_out.routing import Route, RoutingError, parse_repo_labels, resolve
+from lights_out.core.config import Config, ConfigError
+from lights_out.core.models import Ticket
+from lights_out.core.routing import Route, RoutingError, parse_repo_labels, resolve
 
 MAPPING = {"lights-out": "davideganna/lights-out", "web": "acme/website"}
 

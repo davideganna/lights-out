@@ -14,11 +14,11 @@ import logging
 import threading
 from datetime import datetime
 
-from .config import Config
+from ..core.config import Config
+from ..integrations.trello import TrelloClient
+from ..reporting.report import write_reports
+from ..reporting.store import Store
 from .pipeline import Pipeline
-from .report import write_reports
-from .store import Store
-from .trello import TrelloClient
 
 log = logging.getLogger(__name__)
 

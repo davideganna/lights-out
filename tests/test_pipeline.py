@@ -9,11 +9,11 @@ from pathlib import Path
 import pytest
 
 from lights_out.agents import AgentResult, BudgetExceeded, ReviewResult, TriageResult
-from lights_out.config import Config
-from lights_out.models import Ticket
-from lights_out.pipeline import Pipeline
-from lights_out.store import Store
-from lights_out.workspace import Workspace
+from lights_out.core.config import Config
+from lights_out.core.models import Ticket
+from lights_out.orchestration.pipeline import Pipeline
+from lights_out.orchestration.workspace import Workspace
+from lights_out.reporting.store import Store
 
 
 # --- fakes -------------------------------------------------------------------
@@ -200,7 +200,7 @@ async def test_unclear_ticket_goes_to_needs_info_with_questions(cfg, origin):
 
 
 def test_triage_schema_has_no_feature_only_gate():
-    from lights_out import prompts
+    from lights_out.agents import prompts
 
     assert prompts.TRIAGE_SCHEMA["properties"]["decision"]["enum"] == ["proceed", "needs_info"]
     assert "not_a_feature" not in prompts.TRIAGE_SYSTEM
