@@ -12,6 +12,8 @@
   --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,0.10); --hover: rgba(11,11,11,0.04);
   --series-1: #2a78d6; --seq-soft: #cde2fb;
   --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b; --neutral: #a8a69f;
+  /* interrupted and running each have their own hue (validated against every status colour, CVD and normal vision) */
+  --interrupted: #6250d6; --running: #0f7f8a;
   --up: #006300; --down: #b42d2d;
 }
 @media (prefers-color-scheme: dark) {
@@ -22,6 +24,7 @@
     --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10); --hover: rgba(255,255,255,0.05);
     --series-1: #3987e5; --seq-soft: #184f95;
     --neutral: #6f6d67; --up: #0ca30c; --down: #e66767;
+    --interrupted: #9085e9; --running: #2bb3bf;
   }
 }
 :root[data-theme="dark"] {
@@ -31,6 +34,7 @@
   --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10); --hover: rgba(255,255,255,0.05);
   --series-1: #3987e5; --seq-soft: #184f95;
   --neutral: #6f6d67; --up: #0ca30c; --down: #e66767;
+    --interrupted: #9085e9; --running: #2bb3bf;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--page); color: var(--ink); }
@@ -174,9 +178,9 @@ const STATUS = {
   pr_open:     { label: "PR not merged", icon: "!", color: "--serious" },
   needs_info:  { label: "Needs info",    icon: "?", color: "--warning", darkInk: true },
   failed:      { label: "Failed",        icon: "✕", color: "--critical" },
-  interrupted: { label: "Interrupted",   icon: "↺", color: "--neutral" },
+  interrupted: { label: "Interrupted",   icon: "↺", color: "--interrupted" },
   rejected:    { label: "Declined",      icon: "–", color: "--neutral" },
-  running:     { label: "Running",       icon: "●", color: "--series-1" },
+  running:     { label: "Running",       icon: "●", color: "--running" },
 };
 const STATUS_ORDER = ["merged", "pr_open", "needs_info", "failed", "interrupted", "rejected", "running"];
 const STAGES = ["Setup", "Triage", "Implement", "Checks", "Fix", "Review", "Revise", "PR", "CI"];

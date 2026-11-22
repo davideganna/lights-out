@@ -6,6 +6,11 @@ All notable changes to lights-out are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Dashboard: Interrupted (violet) and Declined (gray) no longer share a colour; Running moved to teal so it
+  stays distinct from Interrupted. Red remains reserved for Failed. All pairs checked for colour-blind and
+  normal-vision separation in light and dark mode.
+
 ### Added
 - Interactive dashboard on port 8080, replacing the per-day report pages: KPI tiles with comparison to the
   previous period (runs, merge rate, spend, cost per merged card, median time to merge, first-pass rate),
