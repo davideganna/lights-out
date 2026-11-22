@@ -26,7 +26,7 @@ lights-out = "lights_out.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-lights_out = ["templates/bootstrap/*", "templates/bootstrap/.github/workflows/*"]
+lights_out = ["templates/*.html", "templates/bootstrap/*", "templates/bootstrap/.github/workflows/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

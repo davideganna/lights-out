@@ -14,6 +14,7 @@ from ..core.models import Ticket
 from ..core.routing import Route, RoutingError, resolve
 from ..integrations.github import GitHubClient
 from ..integrations.trello import TrelloClient
+from ..reporting.report import write_reports
 from ..reporting.store import Store
 from .workspace import EmptyRepositoryError, Workspace
 
@@ -68,6 +69,7 @@ class Pipeline:
             nonlocal stage
             stage = name
             self.store.stage(run_id, name, agents.spent_usd)
+            self._refresh_dashboard()
             log.info("[#%s] %s", stub.short_id, name)
 
         try:
@@ -96,8 +98,7 @@ class Pipeline:
             impl = await agents.implement(ticket, triage.plan, ws.path)
             session, summary = impl.session_id, impl.text
 
-            set_stage("checks")
-            session = await self._make_checks_pass(agents, ws, session, ticket.id)
+            session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage)
             if not ws.has_changes():
                 raise StageFailed("implement", "The agent finished without changing any files.")
 
@@ -120,7 +121,7 @@ class Pipeline:
                     session, prompts.FIX_REVIEW.format(issues=issues, check_command=self.cfg.check_command), ws.path
                 )
                 session, summary = fix.session_id, fix.text
-                session = await self._make_checks_pass(agents, ws, session, ticket.id)
+                session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage)
 
             set_stage("deliver")
             return self._deliver(ticket, ws, github, run_id, agents.spent_usd, summary, review.summary, triage.plan)
@@ -160,10 +161,25 @@ class Pipeline:
         if list_name:
             self.trello.move(card_id, list_name)
 
-    async def _make_checks_pass(self, agents: AgentsProtocol, ws: Workspace, session: str, card_id: str) -> str:
+    def _refresh_dashboard(self) -> None:
+        """Rewrite the dashboard data so the page follows a card live. Never fails a card."""
+        try:
+            write_reports(self.store, self.cfg.reports_dir)
+        except Exception:  # noqa: BLE001
+            log.exception("Could not refresh the dashboard data")
+
+    async def _make_checks_pass(
+        self,
+        agents: AgentsProtocol,
+        ws: Workspace,
+        session: str,
+        card_id: str,
+        set_stage: Callable[[str], None],
+    ) -> str:
         cmd = self.cfg.check_command
         self._move(card_id, self.cfg.lists.verifying)
         for attempt in range(self.cfg.max_fix_attempts + 1):
+            set_stage("checks")
             result = ws.run_check(cmd, self.cfg.check_timeout_s)
             if result.ok:
                 return session
@@ -173,6 +189,7 @@ class Pipeline:
                     f"`{cmd}` still fails after {attempt} fix attempt(s).",
                     f"```\n{result.output[-3000:]}\n```",
                 )
+            set_stage("fix")
             fix = await agents.follow_up(
                 session, prompts.FIX_CHECKS.format(check_command=cmd, output=result.output), ws.path
             )
@@ -219,6 +236,7 @@ class Pipeline:
         self._move(ticket.id, lists.pr_opened)
         self.trello.comment(ticket.id, f"{BOT} opened {pr.url}; waiting for CI.")
         self.store.stage(run_id, "ci", cost)
+        self._refresh_dashboard()
         ci, failed = github.wait_for_ci(sha, timeout_s=cfg.ci_timeout_s, grace_s=cfg.ci_grace_s)
 
         if ci == "success" or (ci == "none" and cfg.merge_without_ci):

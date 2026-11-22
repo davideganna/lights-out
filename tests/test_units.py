@@ -11,7 +11,7 @@ from lights_out.core.models import Comment, Ticket
 from lights_out.integrations.github import GitHubClient
 from lights_out.integrations.trello import TrelloClient
 from lights_out.orchestration.workspace import Workspace, WorkspaceError, run_as
-from lights_out.reporting.report import render_day
+from lights_out.reporting.report import write_reports
 from lights_out.reporting.store import Store
 
 
@@ -129,9 +129,51 @@ def test_ci_none_after_grace_period():
     assert gh.wait_for_ci("sha", timeout_s=600, grace_s=60, poll_s=20)[0] == "none"
 
 
-def test_report_renders(tmp_path):
+def test_store_records_a_stage_timeline(tmp_path):
     store = Store(tmp_path / "s.db")
-    rid = store.start(day="n", card_id="c", card_short_id="3", title="<b>x</b>", card_url="u")
-    store.finish(rid, status="merged", cost_usd=1.5, summary="did it", pr_url="https://pr")
-    page = render_day(store, "n")
-    assert "&lt;b&gt;x&lt;/b&gt;" in page and "Merged" in page and "$1.50" in page
+    rid = store.start(day="n", card_id="c", card_short_id="3", title="t", card_url="u")
+    store.stage(rid, "triage", 0.0)
+    store.stage(rid, "implement", 0.25)
+    store.stage(rid, "ci")  # no cost given: keeps the run's current cost
+    store.finish(rid, status="merged", cost_usd=1.5)
+    events = store.all_events()
+    assert [e["stage"] for e in events] == ["triage", "implement", "ci", "end"]
+    assert [e["cost_usd"] for e in events] == [0.0, 0.25, 0.25, 1.5]
+
+
+def test_store_adds_the_events_table_to_an_old_database(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    con = sqlite3.connect(db)
+    con.executescript(
+        "CREATE TABLE runs (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, card_id TEXT NOT NULL,"
+        " card_short_id TEXT NOT NULL, title TEXT NOT NULL, card_url TEXT NOT NULL, status TEXT NOT NULL,"
+        " stage TEXT NOT NULL DEFAULT '', started_at TEXT NOT NULL, finished_at TEXT,"
+        " cost_usd REAL NOT NULL DEFAULT 0, pr_url TEXT, summary TEXT NOT NULL DEFAULT '',"
+        " error TEXT NOT NULL DEFAULT '');"
+        "INSERT INTO runs (day, card_id, card_short_id, title, card_url, status, started_at)"
+        " VALUES ('n', 'c', '1', 't', 'u', 'merged', '2026-11-22T10:00:00+00:00');"
+    )
+    con.commit()
+    con.close()
+    store = Store(db)
+    assert store.all_runs()[0].repo == "" and store.all_events() == []
+
+
+def test_dashboard_data_snapshot(tmp_path):
+    import json
+
+    store = Store(tmp_path / "s.db")
+    rid = store.start(day="n", card_id="c", card_short_id="3", title="<b>x</b>", card_url="https://trello.com/c/x")
+    store.set_repo(rid, "o/app")
+    store.stage(rid, "triage", 0.1)
+    store.finish(rid, status="merged", cost_usd=1.5, summary="did it", pr_url="https://github.com/o/app/pull/1")
+    page = write_reports(store, tmp_path / "out")
+    assert page.name == "index.html" and "lights-out dashboard" in page.read_text()
+    data = json.loads((tmp_path / "out" / "data.json").read_text())
+    run = data["runs"][0]
+    assert run["title"] == "<b>x</b>"  # raw: the page inserts it as text, never as HTML
+    assert run["repo"] == "o/app" and run["status"] == "merged" and run["cost_usd"] == 1.5
+    assert [e["stage"] for e in data["events"]] == ["triage", "end"]
+    assert not (tmp_path / "out" / "data.json.tmp").exists()

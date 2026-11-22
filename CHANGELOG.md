@@ -7,6 +7,14 @@ All notable changes to lights-out are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Interactive dashboard on port 8080, replacing the per-day report pages: KPI tiles with comparison to the
+  previous period (runs, merge rate, spend, cost per merged card, median time to merge, first-pass rate),
+  runs and spend per day, outcomes, where unmerged runs stopped, time and cost per stage, cost vs. duration,
+  per-repository table, and a sortable, searchable runs table with per-run stage timelines. Filters for
+  time range, repository, outcome and text; table view for every chart; light and dark themes; refreshes
+  every 15 s and follows a card live. Self-contained: no external scripts.
+- Stage timeline in the run log (`events` table, added automatically to existing databases), including
+  each `fix` round after a failed `make check`.
 - Repository routing by Trello label: `REPO_LABELS=label=owner/repo,...` lets one board drive several
   repositories. Cards with no repository label, or with two, go to Needs Info with a comment listing the
   valid labels (or to the optional `DEFAULT_REPO`). `setup-board` creates the labels, `doctor` checks

@@ -78,7 +78,7 @@ async def test_processes_queue_top_first_then_idles(setup):
     assert await sched.work_once()
     assert not await sched.work_once()
     assert [r.card_short_id for r in store.day_runs(today())] == ["1", "2"]
-    assert (sched.cfg.reports_dir / f"{today()}.html").exists()
+    assert (sched.cfg.reports_dir / "data.json").exists()
 
 
 async def test_daily_budget_stops_work(setup):
