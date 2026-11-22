@@ -1,0 +1,12 @@
+services:
+  ticket-agent:
+    build: .
+    env_file: .env
+    volumes:
+      - agent-data:/data
+    ports:
+      - "8080:8080"   # morning report: http://localhost:8080/
+    restart: unless-stopped
+
+volumes:
+  agent-data:

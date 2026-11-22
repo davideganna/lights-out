@@ -1,0 +1,119 @@
+"""Queue watcher: as soon as a card lands in the Queued column, process it.
+
+Trello webhooks need a public HTTPS endpoint, so instead the watcher polls the
+Queued column every POLL_SECONDS (default 15 s): one cheap API call per poll,
+nothing exposed to the internet. Cards are processed one at a time, top first.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import functools
+import http.server
+import logging
+import threading
+from datetime import datetime
+
+from .config import Config
+from .pipeline import Pipeline
+from .report import write_reports
+from .store import Store
+from .trello import TrelloClient
+
+log = logging.getLogger(__name__)
+
+# A card that fails is moved out of Queued; if a human queues it again the same
+# day it is retried, but not more than this many times (protects the budget).
+MAX_ATTEMPTS_PER_DAY = 3
+
+
+def today() -> str:
+    return datetime.now().date().isoformat()
+
+
+class Scheduler:
+    def __init__(self, cfg: Config, trello: TrelloClient, store: Store, pipeline: Pipeline):
+        self.cfg = cfg
+        self.trello = trello
+        self.store = store
+        self.pipeline = pipeline
+        self._skipped: set[str] = set()  # cards already reported as over the attempt limit
+
+    def recover(self) -> None:
+        """Runs still marked 'running' were cut off by a crash or restart: put their cards back."""
+        for run in self.store.running():
+            log.warning("Recovering interrupted run #%s (card #%s)", run.id, run.card_short_id)
+            self.store.finish(run.id, status="interrupted", cost_usd=run.cost_usd,
+                              error=f"Interrupted during stage '{run.stage}' (process restarted).")
+            try:
+                self.trello.comment(run.card_id, "🤖 **ticket-agent** was interrupted while working on this; "
+                                    "it will retry.")
+                self.trello.move(run.card_id, self.cfg.lists.ready)
+            except Exception:  # noqa: BLE001
+                log.exception("Could not move card %s back", run.card_id)
+            write_reports(self.store, self.cfg.reports_dir, run.day)
+
+    def next_card(self, day: str):
+        for card in self.trello.cards_in(self.cfg.lists.ready):
+            if self.store.attempts(card.id, day) < MAX_ATTEMPTS_PER_DAY:
+                return card
+            if card.id not in self._skipped:
+                self._skipped.add(card.id)
+                log.warning("Card #%s already attempted %d times today; skipping", card.short_id,
+                            MAX_ATTEMPTS_PER_DAY)
+                self.trello.comment(card.id, f"🤖 **ticket-agent** already tried this card {MAX_ATTEMPTS_PER_DAY} "
+                                    "times today, so it won't pick it up again until tomorrow.")
+        return None
+
+    def budget_left(self, day: str) -> float:
+        return self.cfg.max_day_usd - self.store.day_cost(day)
+
+    async def work_once(self) -> bool:
+        """Process the next queued card. Returns False when there is nothing (affordable) to do."""
+        day = today()
+        left = self.budget_left(day)
+        if left < 0.5:
+            log.info("Daily budget of $%.2f reached; queued cards wait until tomorrow", self.cfg.max_day_usd)
+            return False
+        card = self.next_card(day)
+        if card is None:
+            return False
+        log.info("Picked up card #%s: %s", card.short_id, card.title)
+        outcome = await self.pipeline.process(card, day, budget_usd=min(self.cfg.max_ticket_usd, left))
+        log.info("Card #%s → %s", card.short_id, outcome.status)
+        write_reports(self.store, self.cfg.reports_dir, day)
+        return True
+
+    async def run_now(self) -> None:
+        """Process everything currently queued, then exit."""
+        self.recover()
+        while await self.work_once():
+            pass
+        write_reports(self.store, self.cfg.reports_dir, today())
+
+    async def run_forever(self) -> None:
+        self.recover()
+        write_reports(self.store, self.cfg.reports_dir, today())
+        log.info("Watching '%s' every %ds", self.cfg.lists.ready, self.cfg.poll_seconds)
+        while True:
+            try:
+                worked = await self.work_once()
+            except Exception:  # noqa: BLE001 - keep the watcher alive (e.g. a Trello outage)
+                log.exception("Watcher error")
+                worked = False
+            if not worked:  # after finishing a card, check the queue again straight away
+                await asyncio.sleep(self.cfg.poll_seconds)
+
+
+class _QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, *args) -> None:
+        pass
+
+
+def serve_reports(cfg: Config) -> threading.Thread:
+    handler = functools.partial(_QuietHandler, directory=str(cfg.reports_dir))
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", cfg.report_port), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    log.info("Reports at http://localhost:%d/", cfg.report_port)
+    return thread

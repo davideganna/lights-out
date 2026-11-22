@@ -1,0 +1,5 @@
+#!/bin/sh
+# The orchestrator runs as root (it alone holds the GitHub/Trello tokens).
+# Claude Code, and every command it runs, runs as the unprivileged `agent` user,
+# which cannot read root's environment or files.
+exec setpriv --reuid=agent --regid=agent --init-groups -- /usr/local/bin/claude "$@"
