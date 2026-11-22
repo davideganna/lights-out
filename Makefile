@@ -1,6 +1,6 @@
 .PHONY: check lint test fmt clean
 
-# Lint + tests. CI and ticket-agent both run `make check`.
+# Lint + tests for lights-out itself. CI runs `make check`.
 VENV ?= .venv
 PY := $(VENV)/bin/python
 

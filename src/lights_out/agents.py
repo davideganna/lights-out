@@ -86,9 +86,18 @@ class ClaudeAgents:
             raise BudgetExceeded(f"Ticket budget of ${self.budget_usd:.2f} used up")
         return remaining
 
-    def _options(self, *, model: str, cwd: Path, tools: list[str], append: str,
-                 max_turns: int, output_schema: dict | None = None, resume: str | None = None,
-                 effort: str | None = None) -> ClaudeAgentOptions:
+    def _options(
+        self,
+        *,
+        model: str,
+        cwd: Path,
+        tools: list[str],
+        append: str,
+        max_turns: int,
+        output_schema: dict | None = None,
+        resume: str | None = None,
+        effort: str | None = None,
+    ) -> ClaudeAgentOptions:
         env: dict[str, str] = {}
         cli_path = None
         if self.cfg.agent_user:
@@ -151,40 +160,65 @@ class ClaudeAgents:
 
     # --- roles -------------------------------------------------------------
     async def triage(self, ticket: Ticket, cwd: Path) -> TriageResult:
-        opts = self._options(model=self.cfg.planner_model, cwd=cwd, tools=READ_ONLY_TOOLS,
-                             append=prompts.TRIAGE_SYSTEM, max_turns=40,
-                             output_schema=prompts.TRIAGE_SCHEMA, effort="high")
+        opts = self._options(
+            model=self.cfg.planner_model,
+            cwd=cwd,
+            tools=READ_ONLY_TOOLS,
+            append=prompts.TRIAGE_SYSTEM,
+            max_turns=40,
+            output_schema=prompts.TRIAGE_SCHEMA,
+            effort="high",
+        )
         res = await self._run("triage", ticket.as_prompt(), opts)
         data = res.structured
         if not isinstance(data, dict):
             raise AgentError("triage returned no structured output")
-        return TriageResult(decision=data["decision"], summary=data["summary"],
-                            questions=list(data.get("questions") or []), plan=data.get("plan") or "")
+        return TriageResult(
+            decision=data["decision"],
+            summary=data["summary"],
+            questions=list(data.get("questions") or []),
+            plan=data.get("plan") or "",
+        )
 
     async def implement(self, ticket: Ticket, plan: str, cwd: Path) -> AgentResult:
         cmd = self.cfg.check_command
-        opts = self._options(model=self.cfg.coder_model, cwd=cwd, tools=CODER_TOOLS,
-                             append=prompts.CODER_SYSTEM_APPEND.format(check_command=cmd),
-                             max_turns=self.cfg.coder_max_turns)
+        opts = self._options(
+            model=self.cfg.coder_model,
+            cwd=cwd,
+            tools=CODER_TOOLS,
+            append=prompts.CODER_SYSTEM_APPEND.format(check_command=cmd),
+            max_turns=self.cfg.coder_max_turns,
+        )
         prompt = prompts.CODER_TASK.format(ticket=ticket.as_prompt(), plan=plan, check_command=cmd)
         return await self._run("implement", prompt, opts)
 
     async def follow_up(self, session_id: str, message: str, cwd: Path) -> AgentResult:
         cmd = self.cfg.check_command
-        opts = self._options(model=self.cfg.coder_model, cwd=cwd, tools=CODER_TOOLS,
-                             append=prompts.CODER_SYSTEM_APPEND.format(check_command=cmd),
-                             max_turns=self.cfg.coder_max_turns, resume=session_id)
+        opts = self._options(
+            model=self.cfg.coder_model,
+            cwd=cwd,
+            tools=CODER_TOOLS,
+            append=prompts.CODER_SYSTEM_APPEND.format(check_command=cmd),
+            max_turns=self.cfg.coder_max_turns,
+            resume=session_id,
+        )
         return await self._run("fix", message, opts)
 
     async def review(self, ticket: Ticket, diff: str, cwd: Path) -> ReviewResult:
-        opts = self._options(model=self.cfg.reviewer_model, cwd=cwd, tools=READ_ONLY_TOOLS,
-                             append=prompts.REVIEW_SYSTEM, max_turns=40,
-                             output_schema=prompts.REVIEW_SCHEMA, effort="high")
-        prompt = prompts.REVIEW_TASK.format(ticket=ticket.as_prompt(), diff=diff,
-                                            check_command=self.cfg.check_command)
+        opts = self._options(
+            model=self.cfg.reviewer_model,
+            cwd=cwd,
+            tools=READ_ONLY_TOOLS,
+            append=prompts.REVIEW_SYSTEM,
+            max_turns=40,
+            output_schema=prompts.REVIEW_SCHEMA,
+            effort="high",
+        )
+        prompt = prompts.REVIEW_TASK.format(ticket=ticket.as_prompt(), diff=diff, check_command=self.cfg.check_command)
         res = await self._run("review", prompt, opts)
         data = res.structured
         if not isinstance(data, dict):
             raise AgentError("review returned no structured output")
-        return ReviewResult(approved=bool(data["approved"]), issues=list(data.get("issues") or []),
-                            summary=data.get("summary", ""))
+        return ReviewResult(
+            approved=bool(data["approved"]), issues=list(data.get("issues") or []), summary=data.get("summary", "")
+        )

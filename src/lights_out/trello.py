@@ -34,7 +34,7 @@ class TrelloClient:
     def list_ids(self, refresh: bool = False) -> dict[str, str]:
         if self._list_ids is None or refresh:
             lists = self._req("GET", f"/boards/{self.board_id}/lists", params={"filter": "open"})
-            self._list_ids = {l["name"]: l["id"] for l in lists}
+            self._list_ids = {lst["name"]: lst["id"] for lst in lists}
         return self._list_ids
 
     def list_id(self, name: str) -> str:
@@ -77,7 +77,7 @@ class TrelloClient:
             title=card["name"],
             description=card.get("desc", ""),
             url=card["shortUrl"],
-            labels=[l.get("name") or l.get("color", "") for l in card.get("labels", [])],
+            labels=[lbl.get("name") or lbl.get("color", "") for lbl in card.get("labels", [])],
         )
         if with_details:
             t.checklists = self._checklists(card["id"])
@@ -106,7 +106,9 @@ class TrelloClient:
         return list(reversed(comments))  # API returns newest first
 
     def move(self, card_id: str, list_name: str, *, top: bool = True) -> None:
-        self._req("PUT", f"/cards/{card_id}", params={"idList": self.list_id(list_name), "pos": "top" if top else "bottom"})
+        self._req(
+            "PUT", f"/cards/{card_id}", params={"idList": self.list_id(list_name), "pos": "top" if top else "bottom"}
+        )
 
     def comment(self, card_id: str, text: str) -> None:
         # Trello caps comments at 16384 chars.

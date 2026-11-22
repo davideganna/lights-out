@@ -8,12 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from ticket_agent.agents import AgentResult, BudgetExceeded, ReviewResult, TriageResult
-from ticket_agent.config import Config
-from ticket_agent.models import Ticket
-from ticket_agent.pipeline import Pipeline
-from ticket_agent.store import Store
-from ticket_agent.workspace import Workspace
+from lights_out.agents import AgentResult, BudgetExceeded, ReviewResult, TriageResult
+from lights_out.config import Config
+from lights_out.models import Ticket
+from lights_out.pipeline import Pipeline
+from lights_out.store import Store
+from lights_out.workspace import Workspace
 
 
 # --- fakes -------------------------------------------------------------------
@@ -118,30 +118,46 @@ def origin(tmp_path) -> Path:
 
 @pytest.fixture
 def cfg(tmp_path) -> Config:
-    c = Config(trello_api_key="k", trello_token="t", trello_board_id="b", github_token="",
-               github_repo="o/r", data_dir=tmp_path / "data",
-               check_command="grep -qx ok feature.txt", max_fix_attempts=2)
+    c = Config(
+        trello_api_key="k",
+        trello_token="t",
+        trello_board_id="b",
+        github_token="",
+        github_repo="o/r",
+        data_dir=tmp_path / "data",
+        check_command="grep -qx ok feature.txt",
+        max_fix_attempts=2,
+    )
     for d in (c.workspaces_dir, c.reports_dir, c.runs_dir):
         d.mkdir(parents=True)
     return c
 
 
-TICKET = Ticket(id="card1", short_id="12", title="Add a feature file", description="Please.", url="https://trello.com/c/x")
+TICKET = Ticket(
+    id="card1", short_id="12", title="Add a feature file", description="Please.", url="https://trello.com/c/x"
+)
 
 
 def make(cfg, origin, agents, github):
     trello = FakeTrello(TICKET)
     store = Store(cfg.db_path)
-    pipe = Pipeline(cfg, trello, github, store,
-                    agents_factory=lambda d, budget: agents,
-                    workspace_factory=lambda t: Workspace(cfg.workspaces_dir / t.id, repo_url=str(origin),
-                                                          base_branch="main", github_token=""))
+    pipe = Pipeline(
+        cfg,
+        trello,
+        github,
+        store,
+        agents_factory=lambda d, budget: agents,
+        workspace_factory=lambda t: Workspace(
+            cfg.workspaces_dir / t.id, repo_url=str(origin), base_branch="main", github_token=""
+        ),
+    )
     return pipe, trello, store
 
 
 def branch_file(origin: Path, branch: str, path: str) -> str:
-    return subprocess.run(["git", "show", f"{branch}:{path}"], cwd=origin, capture_output=True,
-                          text=True, check=True).stdout
+    return subprocess.run(
+        ["git", "show", f"{branch}:{path}"], cwd=origin, capture_output=True, text=True, check=True
+    ).stdout
 
 
 # --- tests -----------------------------------------------------------------------
@@ -170,7 +186,8 @@ async def test_unclear_ticket_goes_to_needs_info_with_questions(cfg, origin):
 
 
 def test_triage_schema_has_no_feature_only_gate():
-    from ticket_agent import prompts
+    from lights_out import prompts
+
     assert prompts.TRIAGE_SCHEMA["properties"]["decision"]["enum"] == ["proceed", "needs_info"]
     assert "not_a_feature" not in prompts.TRIAGE_SYSTEM
 

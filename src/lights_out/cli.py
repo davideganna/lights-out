@@ -1,4 +1,4 @@
-"""Command line entry point: `ticket-agent <command>`."""
+"""Command line entry point: `lights-out <command>`."""
 
 from __future__ import annotations
 
@@ -20,9 +20,15 @@ from .workspace import Workspace, bootstrap_repository
 
 
 def _workspace(cfg: Config, name: str) -> Workspace:
-    return Workspace(cfg.workspaces_dir / name, repo_url=cfg.repo_url, base_branch=cfg.base_branch,
-                     github_token=cfg.github_token, agent_user=cfg.agent_user,
-                     author_name=cfg.git_author_name, author_email=cfg.git_author_email)
+    return Workspace(
+        cfg.workspaces_dir / name,
+        repo_url=cfg.repo_url,
+        base_branch=cfg.base_branch,
+        github_token=cfg.github_token,
+        agent_user=cfg.agent_user,
+        author_name=cfg.git_author_name,
+        author_email=cfg.git_author_email,
+    )
 
 
 def build(cfg: Config) -> tuple[TrelloClient, Store, Scheduler]:
@@ -30,7 +36,10 @@ def build(cfg: Config) -> tuple[TrelloClient, Store, Scheduler]:
     github = GitHubClient(cfg.github_token, cfg.github_repo)
     store = Store(cfg.db_path)
     pipeline = Pipeline(
-        cfg, trello, github, store,
+        cfg,
+        trello,
+        github,
+        store,
         agents_factory=lambda transcript_dir, budget: ClaudeAgents(cfg, transcript_dir, budget),
         workspace_factory=lambda t: _workspace(cfg, t.id),
     )
@@ -46,7 +55,7 @@ def cmd_doctor(cfg: Config) -> int:
         print(f"Trello: board OK, lists = {sorted(names)}")
         if missing:
             ok = False
-            print(f"  missing lists {missing}: run `ticket-agent setup-board`")
+            print(f"  missing lists {missing}: run `lights-out setup-board`")
     except Exception as e:  # noqa: BLE001
         ok = False
         print(f"Trello: FAILED: {e}")
@@ -66,7 +75,7 @@ def cmd_doctor(cfg: Config) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="ticket-agent")
+    parser = argparse.ArgumentParser(prog="lights-out")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("run", help="daemon: process cards as soon as they are queued, serve reports")
     sub.add_parser("run-once", help="process every Queued card now, then exit")
@@ -77,8 +86,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
         cfg = Config.from_env()

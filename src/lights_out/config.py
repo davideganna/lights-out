@@ -41,8 +41,17 @@ class Lists:
     done: str = "Done"
 
     def all(self) -> list[str]:
-        names = [self.ready, self.triaged, self.in_progress, self.verifying, self.reviewing,
-                 self.pr_opened, self.needs_info, self.failed, self.done]
+        names = [
+            self.ready,
+            self.triaged,
+            self.in_progress,
+            self.verifying,
+            self.reviewing,
+            self.pr_opened,
+            self.needs_info,
+            self.failed,
+            self.done,
+        ]
         return [n for n in names if n]
 
 
@@ -79,8 +88,8 @@ class Config:
     # Runtime
     data_dir: Path = Path("/data")
     agent_user: str = ""  # run Claude + checks as this OS user (set in Docker)
-    git_author_name: str = "ticket-agent"
-    git_author_email: str = "ticket-agent@users.noreply.github.com"
+    git_author_name: str = "lights-out"
+    git_author_email: str = "lights-out@users.noreply.github.com"
     report_port: int = 8080
 
     @property
@@ -104,7 +113,7 @@ class Config:
         return f"https://github.com/{self.github_repo}.git"
 
     @classmethod
-    def from_env(cls, *, scrub_secrets: bool = True) -> "Config":
+    def from_env(cls, *, scrub_secrets: bool = True) -> Config:
         cfg = cls(
             trello_api_key=_get("TRELLO_API_KEY", required=True),
             trello_token=_get("TRELLO_TOKEN", required=True),
@@ -112,8 +121,9 @@ class Config:
             github_token=_get("GITHUB_TOKEN", required=True),
             github_repo=_get("GITHUB_REPO", required=True),
             base_branch=_get("BASE_BRANCH", "main"),
-            lists=Lists(**{name: os.environ.get(f"LIST_{name.upper()}", default)
-                           for name, default in Lists().__dict__.items()}),
+            lists=Lists(
+                **{name: os.environ.get(f"LIST_{name.upper()}", default) for name, default in Lists().__dict__.items()}
+            ),
             planner_model=_get("PLANNER_MODEL", "claude-opus-5-5"),
             coder_model=_get("CODER_MODEL", "claude-sonnet-5-5"),
             reviewer_model=_get("REVIEWER_MODEL", "claude-opus-5-5"),
@@ -130,8 +140,8 @@ class Config:
             poll_seconds=int(_get("POLL_SECONDS", "15")),
             data_dir=Path(_get("DATA_DIR", "/data")),
             agent_user=_get("AGENT_USER", ""),
-            git_author_name=_get("GIT_AUTHOR_NAME", "ticket-agent"),
-            git_author_email=_get("GIT_AUTHOR_EMAIL", "ticket-agent@users.noreply.github.com"),
+            git_author_name=_get("GIT_AUTHOR_NAME", "lights-out"),
+            git_author_email=_get("GIT_AUTHOR_EMAIL", "lights-out@users.noreply.github.com"),
             report_port=int(_get("REPORT_PORT", "8080")),
         )
         if "/" not in cfg.github_repo:

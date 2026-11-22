@@ -8,17 +8,22 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      # `make check` is the single source of truth: the night-shift agent runs
-      # exactly the same command before opening a pull request.
       - run: make check
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the service image
+        run: docker build -t lights-out .
+      - name: Smoke-test the image
+        run: |
+          docker run --rm --entrypoint lights-out lights-out --help
+          docker run --rm --entrypoint claude-as-agent lights-out --version

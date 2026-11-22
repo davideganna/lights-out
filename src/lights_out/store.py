@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 SCHEMA = """
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS runs (
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 @dataclass
@@ -59,7 +59,8 @@ class Store:
         cur = self._db.execute(
             "INSERT INTO runs (day, card_id, card_short_id, title, card_url, status, started_at)"
             " VALUES (?, ?, ?, ?, ?, 'running', ?)",
-            (day, card_id, card_short_id, title, card_url, _now()))
+            (day, card_id, card_short_id, title, card_url, _now()),
+        )
         self._db.commit()
         return int(cur.lastrowid)
 
@@ -70,11 +71,20 @@ class Store:
             self._db.execute("UPDATE runs SET stage=?, cost_usd=? WHERE id=?", (stage, cost_usd, run_id))
         self._db.commit()
 
-    def finish(self, run_id: int, *, status: str, cost_usd: float, summary: str = "",
-               error: str = "", pr_url: str | None = None) -> None:
+    def finish(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        cost_usd: float,
+        summary: str = "",
+        error: str = "",
+        pr_url: str | None = None,
+    ) -> None:
         self._db.execute(
             "UPDATE runs SET status=?, finished_at=?, cost_usd=?, summary=?, error=?, pr_url=? WHERE id=?",
-            (status, _now(), cost_usd, summary, error, pr_url, run_id))
+            (status, _now(), cost_usd, summary, error, pr_url, run_id),
+        )
         self._db.commit()
 
     def running(self) -> list[Run]:
@@ -87,12 +97,12 @@ class Store:
         return [r[0] for r in self._db.execute("SELECT DISTINCT day FROM runs ORDER BY day DESC")]
 
     def day_cost(self, day: str) -> float:
-        return float(self._db.execute("SELECT COALESCE(SUM(cost_usd),0) FROM runs WHERE day=?",
-                                      (day,)).fetchone()[0])
+        return float(self._db.execute("SELECT COALESCE(SUM(cost_usd),0) FROM runs WHERE day=?", (day,)).fetchone()[0])
 
     def attempts(self, card_id: str, day: str) -> int:
-        return int(self._db.execute("SELECT COUNT(*) FROM runs WHERE card_id=? AND day=?",
-                                    (card_id, day)).fetchone()[0])
+        return int(
+            self._db.execute("SELECT COUNT(*) FROM runs WHERE card_id=? AND day=?", (card_id, day)).fetchone()[0]
+        )
 
     def _rows(self, sql: str, params: tuple = ()) -> list[Run]:
         return [Run(**dict(r)) for r in self._db.execute(sql, params)]

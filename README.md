@@ -1,8 +1,10 @@
-# ticket-agent
+# lights-out
 
-An autonomous software engineer driven by your Trello board. Write cards in *To Do*; **the moment you
-move one to *Queued***, the agent picks it up (it checks the column every 15 seconds) and works through
-queued cards one at a time, top first. For each card:
+**Develop your repository from Trello tickets.** lights-out is a self-hosted orchestrator you point at
+your own GitHub repository and Trello board (Jira is on the [roadmap](ROADMAP.md)). Write cards in
+*To Do*; **the moment you move one to *Queued***, lights-out picks it up (it checks the column every
+15 seconds) and Claude agents carry it through to a merged pull request. Cards are handled one at a
+time, top first. For each card:
 
 1. **Triage** (Opus, read-only): is this clear, PR-sized work? Any kind of ticket is fine:
    features, bug fixes, refactors, setup, tests, docs. If it's unclear or too big, the agent
@@ -52,14 +54,16 @@ later, a webhook can replace the poll.
    - `ANTHROPIC_API_KEY`, or `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`.
    - Trello: get the API key at <https://trello.com/power-ups/admin> (create a Power-Up, then
      "API key"), then generate a token from the link on that page.
-   - GitHub: a fine-grained token limited to the target repo with *Contents*, *Pull requests* and
+   - `GITHUB_REPO`: the repository lights-out should work on (yours, not lights-out itself).
+   - GitHub: a fine-grained token limited to that repository with *Contents*, *Pull requests* and
      *Workflows* set to read/write and *Checks* set to read.
-2. Build and check: `docker compose build && docker compose run --rm ticket-agent doctor`
-3. Create any missing board columns: `docker compose run --rm ticket-agent setup-board`
+   - `TRELLO_BOARD_ID`: the board whose *Queued* column drives the work.
+2. Build and check: `docker compose build && docker compose run --rm lights-out doctor`
+3. Create any missing board columns: `docker compose run --rm lights-out setup-board`
 4. If the repository is empty, give it a first commit (CI workflow running `make check`, a Makefile
-   and a `CLAUDE.md` with conventions): `docker compose run --rm ticket-agent bootstrap`
+   and a `CLAUDE.md` with conventions): `docker compose run --rm lights-out bootstrap`
 5. Start it: `docker compose up -d`. From then on, moving a card to **Queued** starts the agent.
-   (`docker compose run --rm ticket-agent run-once` processes what's queued now and exits.)
+   (`docker compose run --rm lights-out run-once` processes what's queued now and exits.)
 
 ## Writing good cards
 
@@ -81,4 +85,14 @@ later, a webhook can replace the poll.
 | `scheduler.py` | queue watcher (polls Queued), budgets, recovery, report server |
 | `store.py` / `report.py` | SQLite run log and HTML reports |
 
-Tests: `docker build -f Dockerfile.test -t ticket-agent-test . && docker run --rm ticket-agent-test`
+## Development
+
+`make check` runs ruff and the test suite (it creates a local `.venv`). Without a local Python:
+`docker build -f Dockerfile.test -t lights-out-test . && docker run --rm lights-out-test`.
+CI runs `make check` and builds the Docker image on every push and pull request.
+
+See [ROADMAP.md](ROADMAP.md) for what's next and [CHANGELOG.md](CHANGELOG.md) for what changed.
+
+## License
+
+[MIT](LICENSE)

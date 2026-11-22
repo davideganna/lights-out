@@ -48,9 +48,17 @@ def run_as(user: str, cmd: list[str]) -> list[str]:
 
 
 class Workspace:
-    def __init__(self, path: Path, *, repo_url: str, base_branch: str, github_token: str,
-                 agent_user: str = "", author_name: str = "ticket-agent",
-                 author_email: str = "ticket-agent@users.noreply.github.com"):
+    def __init__(
+        self,
+        path: Path,
+        *,
+        repo_url: str,
+        base_branch: str,
+        github_token: str,
+        agent_user: str = "",
+        author_name: str = "lights-out",
+        author_email: str = "lights-out@users.noreply.github.com",
+    ):
         self.path = path
         self.repo_url = repo_url
         self.base_branch = base_branch
@@ -64,17 +72,18 @@ class Workspace:
         if self._token and self.repo_url.startswith("https://github.com/"):
             basic = base64.b64encode(f"x-access-token:{self._token}".encode()).decode()
             # Passed via env (not argv) so other users can't read it from /proc/*/cmdline.
-            env.update({
-                "GIT_CONFIG_COUNT": "1",
-                "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
-                "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic}",
-            })
+            env.update(
+                {
+                    "GIT_CONFIG_COUNT": "1",
+                    "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+                    "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic}",
+                }
+            )
         return env
 
     def git(self, *args: str, cwd: Path | None = None, check: bool = True) -> str:
         cmd = ["git", "-c", "safe.directory=*", *args]
-        r = subprocess.run(cmd, cwd=cwd or self.path, env=self._git_env(),
-                           capture_output=True, text=True)
+        r = subprocess.run(cmd, cwd=cwd or self.path, env=self._git_env(), capture_output=True, text=True)
         if check and r.returncode != 0:
             raise WorkspaceError(f"git {' '.join(args)} failed: {r.stderr.strip()[:500]}")
         return r.stdout
@@ -96,7 +105,8 @@ class Workspace:
         self.git("clone", self.repo_url, str(self.path), cwd=self.path.parent)
         if self.git("rev-parse", "--verify", "HEAD", check=False).strip() == "":
             raise EmptyRepositoryError(
-                "The repository has no commits. Run `ticket-agent bootstrap` once to create the initial commit.")
+                "The repository has no commits. Run `lights-out bootstrap` once to create the initial commit."
+            )
         self.git("checkout", self.base_branch)
 
     def prepare(self, ticket: Ticket) -> None:
@@ -110,8 +120,14 @@ class Workspace:
         if self.agent_user:
             env["HOME"] = f"/home/{self.agent_user}"
         try:
-            r = subprocess.run(run_as(self.agent_user, ["bash", "-lc", command]), cwd=self.path,
-                               env=env, capture_output=True, text=True, timeout=timeout_s)
+            r = subprocess.run(
+                run_as(self.agent_user, ["bash", "-lc", command]),
+                cwd=self.path,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+            )
         except subprocess.TimeoutExpired as e:
             out = (e.stdout or b"").decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
             return CheckResult(False, -1, _tail(out + f"\n[timed out after {timeout_s}s]"))
@@ -176,7 +192,15 @@ def bootstrap_repository(ws: Workspace) -> bool:
             shutil.copy(src, dst)
     ws.stage_all()
     name, email = ws.author
-    ws.git("-c", f"user.name={name}", "-c", f"user.email={email}", "commit", "-q",
-           "-m", "Bootstrap repository for ticket-agent (CI, Makefile, CLAUDE.md)")
+    ws.git(
+        "-c",
+        f"user.name={name}",
+        "-c",
+        f"user.email={email}",
+        "commit",
+        "-q",
+        "-m",
+        "Bootstrap repository for lights-out (CI, Makefile, CLAUDE.md)",
+    )
     ws.git("push", "origin", f"HEAD:refs/heads/{ws.base_branch}")
     return True
