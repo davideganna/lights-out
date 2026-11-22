@@ -1,6 +1,27 @@
-.PHONY: check
+.PHONY: check lint test fmt clean
 
 # Lint + tests. CI and ticket-agent both run `make check`.
-# The first feature ticket replaces this placeholder with the real commands.
-check:
-	@echo "No checks defined yet."
+VENV ?= .venv
+PY := $(VENV)/bin/python
+
+$(VENV)/.installed: pyproject.toml
+	python3 -m venv $(VENV)
+	$(PY) -m pip install --upgrade pip
+	$(PY) -m pip install -e ".[dev]"
+	touch $@
+
+lint: $(VENV)/.installed
+	$(PY) -m ruff check .
+	$(PY) -m ruff format --check .
+
+test: $(VENV)/.installed
+	$(PY) -m pytest
+
+check: lint test
+
+fmt: $(VENV)/.installed
+	$(PY) -m ruff format .
+	$(PY) -m ruff check --fix .
+
+clean:
+	rm -rf $(VENV) .pytest_cache .ruff_cache *.egg-info src/*.egg-info
