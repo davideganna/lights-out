@@ -32,7 +32,7 @@ The phases are in priority order. Each item is a candidate ticket.
 - [ ] Merge policy: auto-merge small or low-risk changes; require human approval when the diff touches
       CI, dependencies, auth, migrations, or is large. Configurable per repository
 - [ ] Network egress allow-list for the container (GitHub, Anthropic, package registries)
-- [ ] Reviewer hardening: flag changes that weaken tests or CI as blocking
+- [x] Reviewer hardening: flag changes that weaken tests or CI as blocking
 
 ## Phase 3: Reliability
 

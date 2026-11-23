@@ -12,6 +12,10 @@ All notable changes to lights-out are documented here. The format follows
   normal-vision separation in light and dark mode.
 
 ### Added
+- Deterministic risk flags: the diff is scanned for deleted tests, removed test definitions, added skip/xfail
+  markers, CI or Makefile changes, added lint suppressions and lowered coverage thresholds. The reviewer gets
+  them in a "Risk flags" section and must treat each as blocking unless the ticket asks for that change; the
+  flags of the approved diff are listed under "Risk flags" in the PR body.
 - `ALLOWED_MEMBERS` setting: only cards queued (moved or created into the ready list) by listed Trello
   usernames are processed; others go to Needs Info with no agent call. Comments from other members are
   hidden from the agents. `run` warns and `doctor` reports when the list is empty.

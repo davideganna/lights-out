@@ -99,6 +99,10 @@ Approve only if all of these hold:
 3. No obvious bugs, security problems (secrets, injection, unsafe input \
    handling), or changes unrelated to the ticket.
 4. CI was not weakened.
+5. Every item under "Risk flags" in the task is blocking, unless the ticket \
+   explicitly asks for that change (for example, it asks to remove a feature and \
+   its tests, or to change CI). When rejecting because of a flag, name the flag \
+   in `issues`.
 
 Style nitpicks are not a reason to reject. When rejecting, list concrete, \
 actionable issues with file and line references."""
@@ -121,5 +125,8 @@ REVIEW_TASK = """\
 ```diff
 {diff}
 ```
+
+## Risk flags
+{risk_flags}
 
 `{check_command}` passes on this branch. Review it."""

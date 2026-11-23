@@ -23,6 +23,7 @@ from claude_agent_sdk import (
 from ..core.config import Config
 from ..core.models import Ticket
 from . import prompts
+from .risk import format_risk_flags
 
 log = logging.getLogger(__name__)
 
@@ -128,7 +129,9 @@ class AgentsProtocol(Protocol):
     async def triage(self, ticket: Ticket, cwd: Path) -> TriageResult: ...
     async def implement(self, ticket: Ticket, plan: str, cwd: Path) -> AgentResult: ...
     async def follow_up(self, session_id: str, message: str, cwd: Path) -> AgentResult: ...
-    async def review(self, ticket: Ticket, diff: str, cwd: Path) -> ReviewResult: ...
+    async def review(
+        self, ticket: Ticket, diff: str, cwd: Path, *, risk_flags: list[str] | None = None
+    ) -> ReviewResult: ...
 
 
 @dataclass
@@ -261,7 +264,9 @@ class ClaudeAgents:
         )
         return await self._run("fix", message, opts)
 
-    async def review(self, ticket: Ticket, diff: str, cwd: Path) -> ReviewResult:
+    async def review(
+        self, ticket: Ticket, diff: str, cwd: Path, *, risk_flags: list[str] | None = None
+    ) -> ReviewResult:
         opts = self._options(
             model=self.cfg.reviewer_model,
             cwd=cwd,
@@ -271,7 +276,12 @@ class ClaudeAgents:
             output_schema=prompts.REVIEW_SCHEMA,
             effort="high",
         )
-        prompt = prompts.REVIEW_TASK.format(ticket=ticket.as_prompt(), diff=diff, check_command=self.cfg.check_command)
+        prompt = prompts.REVIEW_TASK.format(
+            ticket=ticket.as_prompt(),
+            diff=diff,
+            risk_flags=format_risk_flags(risk_flags or []),
+            check_command=self.cfg.check_command,
+        )
         res = await self._run("review", prompt, opts)
         data = res.structured
         if not isinstance(data, dict):

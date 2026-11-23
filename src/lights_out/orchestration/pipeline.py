@@ -10,6 +10,7 @@ from pathlib import Path
 
 from ..agents import prompts
 from ..agents.agents import AgentError, AgentsProtocol, BudgetExceeded
+from ..agents.risk import find_risk_flags, format_risk_flags
 from ..core.config import Config
 from ..core.models import Ticket
 from ..core.routing import Route, RoutingError, resolve
@@ -118,7 +119,9 @@ class Pipeline:
             for round_no in range(self.cfg.max_review_rounds + 1):
                 set_stage(f"review {round_no + 1}")
                 self._move(ticket.id, lists.reviewing)
-                review = await agents.review(ticket, ws.diff_vs_base(), ws.path)
+                # Scan the untruncated diff so padding can't hide a deletion from the flags.
+                flags = find_risk_flags(ws.diff_vs_base(limit=10**9))
+                review = await agents.review(ticket, ws.diff_vs_base(), ws.path, risk_flags=flags)
                 if review.approved:
                     break
                 issues = "\n".join(f"- {i}" for i in review.issues) or review.summary
@@ -137,7 +140,9 @@ class Pipeline:
                 session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage)
 
             set_stage("deliver")
-            return self._deliver(ticket, ws, github, run_id, agents.spent_usd, summary, review.summary, triage.plan)
+            return self._deliver(
+                ticket, ws, github, run_id, agents.spent_usd, summary, review.summary, triage.plan, flags
+            )
 
         except EmptyRepositoryError:
             # Not the ticket's fault: put it back (it stays queued until the repo is fixed).
@@ -251,6 +256,7 @@ class Pipeline:
         summary: str,
         review_summary: str,
         plan: str,
+        risk_flags: list[str],
     ) -> Outcome:
         lists, cfg = self.cfg.lists, self.cfg
         ws.kill_agent_processes()
@@ -258,7 +264,8 @@ class Pipeline:
         sha = ws.push(ticket.branch)
         body = (
             f"Implements Trello card [#{ticket.short_id}]({ticket.url}).\n\n## Summary\n{summary}\n\n"
-            f"## Review\n{review_summary}\n\n<details><summary>Plan</summary>\n\n{plan}\n</details>\n\n"
+            f"## Review\n{review_summary}\n\n## Risk flags\n{format_risk_flags(risk_flags)}\n\n"
+            f"<details><summary>Plan</summary>\n\n{plan}\n</details>\n\n"
             f"_Opened by lights-out. Merged automatically once CI passes._"
         )
         pr = github.open_or_update_pr(
