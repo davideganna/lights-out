@@ -36,6 +36,13 @@ class CheckResult:
         return "passed" if self.ok else f"failed (exit {self.exit_code})"
 
 
+@dataclass
+class FileChange:
+    path: str
+    added: int
+    deleted: int
+
+
 def _tail(text: str, limit: int = 12000) -> str:
     return text if len(text) <= limit else "...(truncated)...\n" + text[-limit:]
 
@@ -147,6 +154,26 @@ class Workspace:
         if len(full) > limit:
             full = full[:limit] + "\n...(diff truncated; read the files for the rest)..."
         return (stat + "\n" + full).strip()
+
+    def changed_files(self) -> list[FileChange]:
+        """Files this branch changes relative to the base, with added/deleted line counts."""
+        self.stage_all()
+        out = self.git("diff", "--cached", "--numstat", "--no-renames", "-z", f"origin/{self.base_branch}")
+        self._hand_to_agent()
+        changes: list[FileChange] = []
+        for line in out.split("\0"):
+            parts = line.split("\t", 2)
+            if len(parts) != 3:
+                continue
+            added, deleted, path = parts
+            changes.append(
+                FileChange(
+                    path=path,
+                    added=int(added) if added.isdigit() else 0,
+                    deleted=int(deleted) if deleted.isdigit() else 0,
+                )
+            )
+        return changes
 
     def has_changes(self) -> bool:
         self.stage_all()

@@ -18,6 +18,7 @@ from ..integrations.github import GitHubClient
 from ..integrations.trello import TrelloClient
 from ..reporting.report import write_reports
 from ..reporting.store import Store
+from .policy import merge_policy
 from .workspace import EmptyRepositoryError, Workspace
 
 log = logging.getLogger(__name__)
@@ -261,12 +262,20 @@ class Pipeline:
         lists, cfg = self.cfg.lists, self.cfg
         ws.kill_agent_processes()
         ws.commit(f"{ticket.title} (#{ticket.short_id})\n\nTrello: {ticket.url}")
+        reasons = merge_policy(ws.changed_files(), cfg)
         sha = ws.push(ticket.branch)
+        approval = "## Needs human approval\n" + "".join(f"- {r}\n" for r in reasons) + "\n" if reasons else ""
+        footer = (
+            "_Opened by lights-out. Needs human approval before merging._"
+            if reasons
+            else "_Opened by lights-out. Merged automatically once CI passes._"
+        )
         body = (
             f"Implements Trello card [#{ticket.short_id}]({ticket.url}).\n\n## Summary\n{summary}\n\n"
             f"## Review\n{review_summary}\n\n## Risk flags\n{format_risk_flags(risk_flags)}\n\n"
+            f"{approval}"
             f"<details><summary>Plan</summary>\n\n{plan}\n</details>\n\n"
-            f"_Opened by lights-out. Merged automatically once CI passes._"
+            f"{footer}"
         )
         pr = github.open_or_update_pr(
             head=ticket.branch, base=cfg.base_branch, title=ticket.title, body=body, head_sha=sha
@@ -278,6 +287,22 @@ class Pipeline:
         ci, failed = github.wait_for_ci(sha, timeout_s=cfg.ci_timeout_s, grace_s=cfg.ci_grace_s)
 
         if ci == "success" or (ci == "none" and cfg.merge_without_ci):
+            if reasons:
+                bullets = "".join(f"- {r}\n" for r in reasons)
+                github.comment_pr(
+                    pr.number,
+                    f"{BOT} did not merge this: it needs human approval.\n\n{bullets}\n"
+                    "A human must review and merge this PR.",
+                )
+                self.trello.comment(
+                    ticket.id,
+                    f"{BOT} opened {pr.url} and CI passed, but it needs human approval before merging:\n\n"
+                    f"{bullets}\nA human must review and merge it.",
+                )
+                self._move(ticket.id, lists.pr_opened)
+                reason = "needs human approval: " + "; ".join(reasons)
+                self.store.finish(run_id, status="pr_open", cost_usd=cost, summary=summary, pr_url=pr.url, error=reason)
+                return Outcome("pr_open", summary=summary, pr_url=pr.url, error=reason)
             github.merge(pr.number, title=f"{ticket.title} (#{pr.number})")
             github.delete_branch(ticket.branch)
             self.trello.comment(ticket.id, f"{BOT} implemented and merged this: {pr.url}\n\n{summary}")

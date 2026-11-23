@@ -47,6 +47,11 @@ later, a webhook can replace the poll.
 - **It only pushes to `agent/*` branches** and changes `main` only through a squash-merged PR.
 - **It merges only after CI passes.** If the repository has no CI, it leaves the PR open unless
   `MERGE_WITHOUT_CI=true`.
+- **Risky or large changes are left for a human.** Even with green CI, the PR is not merged (the card stays
+  in PR Opened, with a comment listing why) if it touches a path matching `HUMAN_REVIEW_PATHS` (CI,
+  dependencies, auth, migrations; comma-separated globs, see `.env.example` for the default list) or changes
+  more than `MAX_AUTO_MERGE_LINES` lines (added + deleted, default `400`). Set `HUMAN_REVIEW_PATHS=` (empty)
+  to disable path holds and `MAX_AUTO_MERGE_LINES=0` to disable the size limit.
 - **Only allowed members can queue work.** With `ALLOWED_MEMBERS` set (Trello usernames, comma-separated),
   a card is processed only if the member who moved it into **Queued** is on the list; otherwise it goes to
   Needs Info without any agent call. Comments by other members are left out of what the agents read
@@ -70,6 +75,8 @@ later, a webhook can replace the poll.
      `REPO_LABELS=web=acme/website,api=acme/api`. See [Choosing the repository](#choosing-the-repository).
    - `ALLOWED_MEMBERS`: Trello usernames (without `@`) allowed to queue cards, e.g. `ALLOWED_MEMBERS=alice,bob`.
      Strongly recommended; see the Safety model.
+   - Optional: `HUMAN_REVIEW_PATHS` and `MAX_AUTO_MERGE_LINES` decide which changes need a human to merge;
+     see the Safety model.
    - GitHub: a fine-grained token limited to those repositories with *Contents*, *Pull requests* and
      *Workflows* set to read/write and *Checks* set to read.
    - `TRELLO_BOARD_ID`: the board whose *Queued* column drives the work.

@@ -15,6 +15,7 @@ from lights_out.core.config import Config
 from lights_out.core.models import Comment, Ticket
 from lights_out.integrations.trello import queuing_member
 from lights_out.orchestration.pipeline import Pipeline
+from lights_out.orchestration.policy import merge_policy
 from lights_out.orchestration.scheduler import run_until_signal
 from lights_out.orchestration.workspace import Workspace
 from lights_out.reporting.store import Store
@@ -59,6 +60,7 @@ class FakeGitHub:
         self.ci = ci
         self.merged = False
         self.prs: list[dict] = []
+        self.pr_comments: list[tuple[int, str]] = []
 
     def open_or_update_pr(self, **kw):
         self.prs.append(kw)
@@ -66,6 +68,9 @@ class FakeGitHub:
 
     def wait_for_ci(self, sha, timeout_s, grace_s):
         return self.ci, (["check"] if self.ci == "failure" else [])
+
+    def comment_pr(self, number, body):
+        self.pr_comments.append((number, body))
 
     def merge(self, number, title):
         self.merged = True
@@ -201,6 +206,8 @@ async def test_happy_path_merges_and_moves_to_done(cfg, origin):
     assert branch_file(origin, TICKET.branch, "feature.txt") == "ok"
     assert gh.prs[0]["head"] == TICKET.branch and gh.prs[0]["base"] == "main"
     assert "## Risk flags\nnone" in gh.prs[0]["body"]
+    assert "Needs human approval" not in gh.prs[0]["body"]
+    assert gh.pr_comments == []
     run = store.day_runs("2026-11-22")[0]
     assert run.status == "merged" and run.pr_url and run.cost_usd == pytest.approx(1.1)
 
@@ -450,6 +457,7 @@ class MakefileAgents(FakeAgents):
 
 
 async def test_risk_flags_reach_the_reviewer_and_the_pr_body(cfg, origin):
+    cfg.human_review_paths = []  # this test is about risk flags, not the merge policy
     agents, gh = MakefileAgents(), FakeGitHub("success")
     pipe, _, _ = make(cfg, origin, agents, gh)
     out = await pipe.process(TICKET, "2026-11-22", budget_usd=10)
@@ -458,3 +466,73 @@ async def test_risk_flags_reach_the_reviewer_and_the_pr_body(cfg, origin):
     body = gh.prs[0]["body"]
     assert "## Risk flags\n- CI or check command changed: Makefile" in body
     assert gh.merged
+
+
+class BigAgents(FakeAgents):
+    async def implement(self, ticket, plan, cwd):
+        (Path(cwd) / "big.txt").write_text("x\n" * 500)
+        return await super().implement(ticket, plan, cwd)
+
+
+def test_changed_files_counts_lines(cfg, origin):
+    ws = Workspace(cfg.workspaces_dir / "w", repo_url=str(origin), base_branch="main", github_token="")
+    ws.prepare(TICKET)
+    (ws.path / "new.txt").write_text("a\nb\nc\n")
+    (ws.path / "README.md").write_text("changed\n")
+    (ws.path / "blob.bin").write_bytes(b"\x00\x01\x02\xff" * 10)
+    got = {c.path: (c.added, c.deleted) for c in ws.changed_files()}
+    assert got == {"new.txt": (3, 0), "README.md": (1, 1), "blob.bin": (0, 0)}
+
+
+def test_changed_files_returns_real_paths_for_unusual_names(cfg, origin):
+    ws = Workspace(cfg.workspaces_dir / "w", repo_url=str(origin), base_branch="main", github_token="")
+    ws.prepare(TICKET)
+    wf = ws.path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    names = [".github/workflows/d\u00e9ploy.yml", ".github/workflows/my deploy.yml", ".github/workflows/a\tb.yml"]
+    for n in names:
+        (ws.path / n).write_text("on: push\n")
+    changes = ws.changed_files()
+    assert sorted(c.path for c in changes) == sorted(names)
+    reasons = merge_policy(changes, cfg)
+    assert len(reasons) == 3 and all("(matches .github/**)" in r for r in reasons)
+
+
+async def test_risky_change_is_held_for_human_approval(cfg, origin):
+    gh = FakeGitHub("success")
+    pipe, trello, store = make(cfg, origin, MakefileAgents(), gh)
+    out = await pipe.process(TICKET, "2026-11-22", budget_usd=10)
+    reason = "touches Makefile (matches Makefile)"
+    assert out.status == "pr_open" and not gh.merged
+    assert trello.moves[-1] == "PR Opened" and "Done" not in trello.moves
+    body = gh.prs[0]["body"]
+    assert "## Needs human approval" in body and reason in body
+    assert "Needs human approval before merging" in body
+    assert gh.pr_comments and reason in gh.pr_comments[-1][1]
+    assert reason in trello.comments[-1] and "pull/7" in trello.comments[-1]
+    run = store.day_runs("2026-11-22")[0]
+    assert run.status == "pr_open" and run.error.startswith("needs human approval: ")
+
+
+async def test_large_change_is_held_unless_limit_disabled(cfg, origin):
+    gh = FakeGitHub("success")
+    pipe, _, _ = make(cfg, origin, BigAgents(), gh)
+    out = await pipe.process(TICKET, "n", budget_usd=10)
+    assert out.status == "pr_open" and not gh.merged
+    assert "changed lines (limit 400)" in out.error
+
+    cfg.max_auto_merge_lines = 0
+    gh2 = FakeGitHub("success")
+    pipe2, _, _ = make(cfg, origin, BigAgents(), gh2)
+    assert (await pipe2.process(TICKET, "n2", budget_usd=10)).status == "merged"
+    assert gh2.merged
+
+
+async def test_risky_change_with_failing_ci_still_fails(cfg, origin):
+    gh = FakeGitHub("failure")
+    pipe, trello, _ = make(cfg, origin, MakefileAgents(), gh)
+    out = await pipe.process(TICKET, "n", budget_usd=10)
+    assert out.status == "pr_open" and not gh.merged
+    assert out.error.startswith("CI failed")
+    assert trello.moves[-1] == "Failed"
+    assert gh.pr_comments == []
