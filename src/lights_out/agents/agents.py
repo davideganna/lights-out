@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -26,6 +29,7 @@ log = logging.getLogger(__name__)
 READ_ONLY_TOOLS = ["Read", "Glob", "Grep"]
 CODER_TOOLS = ["Read", "Glob", "Grep", "Edit", "Write", "Bash", "TodoWrite"]
 AGENT_CLI_WRAPPER = "/usr/local/bin/claude-as-agent"
+CLAUDE_CREDENTIAL_VARS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 
 
 class AgentError(RuntimeError):
@@ -34,6 +38,63 @@ class AgentError(RuntimeError):
 
 class BudgetExceeded(AgentError):
     pass
+
+
+def _process_settings(cfg: Config) -> tuple[dict[str, str], str | None]:
+    """Env overrides and CLI path for the Claude process. Credentials come from the inherited environment."""
+    env: dict[str, str] = {}
+    cli_path = None
+    if cfg.agent_user:
+        env["HOME"] = f"/home/{cfg.agent_user}"
+        cli_path = AGENT_CLI_WRAPPER
+    return env, cli_path
+
+
+def _redact(text: str) -> str:
+    """Replace any configured credential value in text; tokens must never reach output or logs."""
+    for var in CLAUDE_CREDENTIAL_VARS:
+        value = os.environ.get(var, "")
+        if value:
+            text = text.replace(value, "***")
+    return text
+
+
+async def _check_claude_async(cfg: Config) -> str:
+    if not any(os.environ.get(v) for v in CLAUDE_CREDENTIAL_VARS):
+        raise AgentError(f"no Claude credentials: set {' or '.join(CLAUDE_CREDENTIAL_VARS)}")
+    env, cli_path = _process_settings(cfg)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chmod(tmp, 0o755)  # the unprivileged agent user must be able to enter it
+            options = ClaudeAgentOptions(
+                model=cfg.planner_model,
+                cwd=tmp,
+                tools=[],
+                allowed_tools=[],
+                max_turns=1,
+                max_budget_usd=0.05,
+                env=env,
+                cli_path=cli_path,
+                stderr=lambda line: log.debug("claude: %s", _redact(line)),
+            )
+            result: ResultMessage | None = None
+            async for msg in query(prompt="Reply with the word OK.", options=options):
+                if isinstance(msg, ResultMessage):
+                    result = msg
+        if result is None:
+            raise AgentError("Claude ended without a result")
+        if result.is_error:
+            raise AgentError(_redact("; ".join(result.errors or []) or result.subtype))
+    except AgentError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise AgentError(_redact(str(e))) from None
+    return cfg.planner_model
+
+
+def check_claude(cfg: Config) -> str:
+    """Verify Claude credentials with a one-turn request; returns the model name or raises AgentError."""
+    return asyncio.run(_check_claude_async(cfg))
 
 
 @dataclass
@@ -98,11 +159,7 @@ class ClaudeAgents:
         resume: str | None = None,
         effort: str | None = None,
     ) -> ClaudeAgentOptions:
-        env: dict[str, str] = {}
-        cli_path = None
-        if self.cfg.agent_user:
-            env["HOME"] = f"/home/{self.cfg.agent_user}"
-            cli_path = AGENT_CLI_WRAPPER
+        env, cli_path = _process_settings(self.cfg)
         return ClaudeAgentOptions(
             model=model,
             cwd=str(cwd),

@@ -22,7 +22,7 @@ The phases are in priority order. Each item is a candidate ticket.
       itself only when a card carries its label
 - [x] Graceful shutdown: on SIGTERM, finish or roll back the current card and put it back in the queue
       (today a stop mid-card relies on crash recovery at the next start)
-- [ ] `doctor` also checks Claude authentication
+- [x] `doctor` also checks Claude authentication
 
 ## Phase 2: Safety (auto-merge is the risky part)
 

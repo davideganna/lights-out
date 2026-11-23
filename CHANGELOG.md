@@ -12,6 +12,8 @@ All notable changes to lights-out are documented here. The format follows
   normal-vision separation in light and dark mode.
 
 ### Added
+- `doctor` checks Claude authentication: it fails if neither `CLAUDE_CODE_OAUTH_TOKEN` nor `ANTHROPIC_API_KEY`
+  is set, otherwise makes a one-turn request with `PLANNER_MODEL`.
 - Graceful shutdown: on SIGTERM or SIGINT (`docker compose stop`, Ctrl-C) lights-out stops picking up cards,
   puts the card in progress back in Queued with a comment and records the run as interrupted. Stages that
   block (workspace setup, checks, and delivery: push, PR, CI wait, merge) can't be interrupted: the card
