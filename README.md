@@ -67,6 +67,7 @@ later, a webhook can replace the poll.
      *Workflows* set to read/write and *Checks* set to read.
    - `TRELLO_BOARD_ID`: the board whose *Queued* column drives the work.
 2. Build and check: `docker compose build && docker compose run --rm lights-out doctor`
+   (`doctor` also checks the Claude credentials with a tiny real request, well under one cent)
 3. Create any missing board columns and repository labels: `docker compose run --rm lights-out setup-board`
 4. If a repository is empty, give it a first commit (CI workflow running `make check`, a Makefile
    and a `CLAUDE.md` with conventions): `docker compose run --rm lights-out bootstrap <label>`

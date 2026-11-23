@@ -8,7 +8,7 @@ import logging
 import sys
 from datetime import datetime
 
-from .agents.agents import ClaudeAgents
+from .agents.agents import ClaudeAgents, check_claude
 from .core.config import Config, ConfigError
 from .core.routing import Route
 from .integrations.github import GitHubClient
@@ -89,6 +89,12 @@ def cmd_doctor(cfg: Config) -> int:
         except Exception as e:  # noqa: BLE001
             ok = False
             print(f"GitHub [{label}]: {repo_name} FAILED: {e}")
+    try:
+        model = check_claude(cfg)
+        print(f"Claude: OK (model {model})")
+    except Exception as e:  # noqa: BLE001
+        ok = False
+        print(f"Claude: FAILED: {e}")
     print("OK" if ok else "Problems found")
     return 0 if ok else 1
 
@@ -98,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("run", help="daemon: process cards as soon as they are queued, serve reports")
     sub.add_parser("run-once", help="process every Queued card now, then exit")
-    sub.add_parser("doctor", help="check Trello and GitHub credentials")
+    sub.add_parser("doctor", help="check Trello, GitHub and Claude credentials")
     sub.add_parser("setup-board", help="create missing Trello lists and repository labels")
     boot = sub.add_parser("bootstrap", help="give an empty repository its first commit (CI, Makefile, CLAUDE.md)")
     boot.add_argument("repo", help="repository label or owner/repo (must be in REPO_LABELS or DEFAULT_REPO)")
