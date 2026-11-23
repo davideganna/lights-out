@@ -9,7 +9,7 @@ import pytest
 
 from lights_out.core.models import Comment, Ticket
 from lights_out.integrations.github import GitHubClient
-from lights_out.integrations.trello import TrelloClient
+from lights_out.integrations.trello import TrelloClient, queuing_member
 from lights_out.orchestration.workspace import Workspace, WorkspaceError, run_as
 from lights_out.reporting.report import write_reports
 from lights_out.reporting.store import Store
@@ -77,7 +77,11 @@ def test_trello_cards_sorted_and_comments_oldest_first():
             return httpx.Response(
                 200,
                 json=[
-                    {"date": "2026-11-21T10:00:00Z", "data": {"text": "newer"}, "memberCreator": {"fullName": "B"}},
+                    {
+                        "date": "2026-11-21T10:00:00Z",
+                        "data": {"text": "newer"},
+                        "memberCreator": {"fullName": "B", "username": "bee"},
+                    },
                     {"date": "2026-11-20T10:00:00Z", "data": {"text": "older"}, "memberCreator": {"fullName": "A"}},
                 ],
             )
@@ -90,6 +94,7 @@ def test_trello_cards_sorted_and_comments_oldest_first():
     assert [c.title for c in tr.cards_in("Ready")] == ["first", "second"]
     t = tr.get_ticket("a")
     assert [c.text for c in t.comments] == ["older", "newer"] and t.labels == ["feature"]
+    assert [c.username for c in t.comments] == ["", "bee"]
     tr.comment("a", "hello")
 
 
@@ -177,3 +182,68 @@ def test_dashboard_data_snapshot(tmp_path):
     assert run["repo"] == "o/app" and run["status"] == "merged" and run["cost_usd"] == 1.5
     assert [e["stage"] for e in data["events"]] == ["triage", "end"]
     assert not (tmp_path / "out" / "data.json.tmp").exists()
+
+
+def _moved(user, date, list_id):
+    return {
+        "type": "updateCard",
+        "date": date,
+        "memberCreator": {"username": user},
+        "data": {"listAfter": {"id": list_id}},
+    }
+
+
+def test_queuing_member_moved_into_list():
+    actions = [_moved("alice", "2026-11-20T10:00:00Z", "Q"), _moved("bob", "2026-11-21T10:00:00Z", "other")]
+    assert queuing_member(actions, "Q") == "alice"
+
+
+def test_queuing_member_created_in_list():
+    actions = [
+        {
+            "type": "createCard",
+            "date": "2026-11-20T10:00:00Z",
+            "memberCreator": {"username": "carol"},
+            "data": {"list": {"id": "Q"}},
+        }
+    ]
+    assert queuing_member(actions, "Q") == "carol"
+
+
+def test_queuing_member_latest_move_wins_whatever_the_order():
+    actions = [_moved("alice", "2026-11-20T10:00:00Z", "Q"), _moved("bob", "2026-11-22T10:00:00Z", "Q")]
+    assert queuing_member(actions, "Q") == "bob"
+    assert queuing_member(list(reversed(actions)), "Q") == "bob"
+
+
+def test_queuing_member_none_without_match():
+    assert queuing_member([], "Q") is None
+    assert queuing_member([_moved("alice", "2026-11-20T10:00:00Z", "other")], "Q") is None
+
+
+def test_trello_queued_by_and_me():
+    seen = []
+
+    def handler(req: httpx.Request):
+        seen.append(req.url.path)
+        if req.url.path.endswith("/boards/board/lists"):
+            return httpx.Response(200, json=[{"id": "Q", "name": "Queued"}])
+        if req.url.path.endswith("/cards/a/actions"):
+            assert req.url.params["filter"] == "createCard,updateCard"
+            return httpx.Response(200, json=[_moved("Alice", "2026-11-20T10:00:00Z", "Q")])
+        if req.url.path.endswith("/members/me"):
+            return httpx.Response(200, json={"username": "Lights_Out"})
+        return httpx.Response(404)
+
+    tr = _trello(handler)
+    assert tr.queued_by("a", "Queued") == "Alice"
+    assert tr.me() == "lights_out"
+    assert tr.me() == "lights_out"
+    assert seen.count("/1/members/me") + seen.count("/members/me") == 1
+
+
+def test_queuing_member_skips_ignored_member():
+    actions = [_moved("alice", "2026-11-20T10:00:00Z", "Q"), _moved("Lights-Out-Bot", "2026-11-21T10:00:00Z", "Q")]
+    assert queuing_member(actions, "Q") == "Lights-Out-Bot"
+    assert queuing_member(actions, "Q", ignore="lights-out-bot") == "alice"
+    assert queuing_member(actions[1:], "Q", ignore="lights-out-bot") is None

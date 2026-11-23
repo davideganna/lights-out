@@ -125,3 +125,25 @@ def test_doctor_claude_failed(monkeypatch, cfg, capsys):
     out = capsys.readouterr().out
     assert "Claude: FAILED: invalid x-api-key" in out
     assert "Problems found" in out
+
+
+def test_doctor_lists_allowed_members(monkeypatch, cfg, capsys):
+    monkeypatch.setattr(cli, "check_claude", lambda c: "m")
+    cfg.allowed_members = ["alice", "bob"]
+    assert cli.cmd_doctor(cfg) == 0
+    assert "Allowed members: @alice, @bob" in capsys.readouterr().out
+
+
+def test_doctor_warns_on_empty_allow_list_without_failing(monkeypatch, cfg, capsys):
+    monkeypatch.setattr(cli, "check_claude", lambda c: "m")
+    assert cli.cmd_doctor(cfg) == 0
+    assert "WARNING: ALLOWED_MEMBERS is empty" in capsys.readouterr().out
+
+
+def test_warn_if_open_board(cfg, caplog):
+    cli._warn_if_open_board(cfg)
+    assert [r.levelname for r in caplog.records] == ["WARNING"]
+    caplog.clear()
+    cfg.allowed_members = ["alice"]
+    cli._warn_if_open_board(cfg)
+    assert caplog.records == []

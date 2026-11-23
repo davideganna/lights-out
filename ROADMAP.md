@@ -27,7 +27,7 @@ The phases are in priority order. Each item is a candidate ticket.
 ## Phase 2: Safety (auto-merge is the risky part)
 
 - [ ] Document and verify branch protection on the target's `main`: required CI check, no bypass
-- [ ] Allow-list of Trello members whose cards are processed (anyone who can edit the board can
+- [x] Allow-list of Trello members whose cards are processed (anyone who can edit the board can
       currently give orders to an agent with merge rights)
 - [ ] Merge policy: auto-merge small or low-risk changes; require human approval when the diff touches
       CI, dependencies, auth, migrations, or is large. Configurable per repository

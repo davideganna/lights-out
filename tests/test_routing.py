@@ -76,3 +76,18 @@ def test_config_explains_the_github_repo_migration(env):
     env.setenv("GITHUB_REPO", "acme/website")
     with pytest.raises(ConfigError, match="replaced by REPO_LABELS"):
         Config.from_env(scrub_secrets=False)
+
+
+def test_parse_members():
+    from lights_out.core.config import parse_members
+
+    assert parse_members(" Alice, @bob ,,CAROL ") == ["alice", "bob", "carol"]
+    assert parse_members("") == [] and parse_members("  ,  ") == []
+    assert parse_members("a,A,@a") == ["a"]
+
+
+def test_config_reads_allowed_members(env):
+    env.setenv("REPO_LABELS", "web=acme/website")
+    assert Config.from_env(scrub_secrets=False).allowed_members == []
+    env.setenv("ALLOWED_MEMBERS", " Alice, @bob")
+    assert Config.from_env(scrub_secrets=False).allowed_members == ["alice", "bob"]

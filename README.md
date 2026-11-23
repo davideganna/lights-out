@@ -47,6 +47,11 @@ later, a webhook can replace the poll.
 - **It only pushes to `agent/*` branches** and changes `main` only through a squash-merged PR.
 - **It merges only after CI passes.** If the repository has no CI, it leaves the PR open unless
   `MERGE_WITHOUT_CI=true`.
+- **Only allowed members can queue work.** With `ALLOWED_MEMBERS` set (Trello usernames, comma-separated),
+  a card is processed only if the member who moved it into **Queued** is on the list; otherwise it goes to
+  Needs Info without any agent call. Comments by other members are left out of what the agents read
+  (lights-out's own comments are kept). If it is empty, any board member can queue work; `run` and
+  `doctor` warn about it.
 - **Budgets:** `MAX_TICKET_USD` per card (enforced across all agent calls) and `MAX_DAY_USD`
   per day. A card re-queued after failing is retried at most 3 times a day.
 - **Crash recovery:** cards left mid-flight by a restart go back to Queued with a comment.
@@ -63,6 +68,8 @@ later, a webhook can replace the poll.
      "API key"), then generate a token from the link on that page.
    - `REPO_LABELS`: which repositories lights-out may work on, keyed by Trello label, e.g.
      `REPO_LABELS=web=acme/website,api=acme/api`. See [Choosing the repository](#choosing-the-repository).
+   - `ALLOWED_MEMBERS`: Trello usernames (without `@`) allowed to queue cards, e.g. `ALLOWED_MEMBERS=alice,bob`.
+     Strongly recommended; see the Safety model.
    - GitHub: a fine-grained token limited to those repositories with *Contents*, *Pull requests* and
      *Workflows* set to read/write and *Checks* set to read.
    - `TRELLO_BOARD_ID`: the board whose *Queued* column drives the work.

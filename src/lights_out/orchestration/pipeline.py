@@ -75,6 +75,18 @@ class Pipeline:
 
         try:
             ticket = self.trello.get_ticket(stub.id)
+            allowed = self.cfg.allowed_members
+            if allowed:
+                me = self.trello.me()
+                who = self.trello.queued_by(stub.id, lists.ready, me)
+                if who is None or who.lower() not in allowed:
+                    reason = "Only cards queued by allowed members are processed; " + (
+                        f"queued by @{who}" if who else "queued by an unknown member"
+                    )
+                    return self._send_back(ticket, run_id, agents.spent_usd, reason, [])
+                ticket.comments = [
+                    c for c in ticket.comments if c.username.lower() in allowed or c.username.lower() == me
+                ]
             try:
                 route = resolve(ticket, self.cfg.repo_labels, self.cfg.default_repo)
             except RoutingError as e:

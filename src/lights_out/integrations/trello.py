@@ -13,6 +13,23 @@ class TrelloError(RuntimeError):
     pass
 
 
+def queuing_member(actions: list[dict], list_id: str, ignore: str | None = None) -> str | None:
+    """Username of whoever most recently put a card in `list_id` (moved or created there).
+
+    Actions by `ignore` (case-insensitive) are skipped: lights-out itself puts cards back in the
+    ready list (crash recovery, shutdown), and the human who queued the card must still decide."""
+    for a in sorted(actions, key=lambda a: a.get("date", ""), reverse=True):
+        data = a.get("data", {})
+        if (a.get("type") == "updateCard" and data.get("listAfter", {}).get("id") == list_id) or (
+            a.get("type") == "createCard" and data.get("list", {}).get("id") == list_id
+        ):
+            name = a.get("memberCreator", {}).get("username") or None
+            if name and ignore and name.lower() == ignore.lower():
+                continue
+            return name
+    return None
+
+
 class TrelloClient:
     def __init__(self, api_key: str, token: str, board_id: str, *, http: httpx.Client | None = None):
         self.board_id = board_id
@@ -23,6 +40,7 @@ class TrelloClient:
             headers={"Authorization": f'OAuth oauth_consumer_key="{api_key}", oauth_token="{token}"'},
         )
         self._list_ids: dict[str, str] | None = None
+        self._me: str | None = None
 
     def _req(self, method: str, path: str, **kw):
         r = self._http.request(method, path, **kw)
@@ -111,10 +129,24 @@ class TrelloClient:
                 author=a.get("memberCreator", {}).get("fullName", "unknown"),
                 text=a["data"]["text"],
                 date=a["date"][:16].replace("T", " "),
+                username=a.get("memberCreator", {}).get("username", ""),
             )
             for a in actions
         ]
         return list(reversed(comments))  # API returns newest first
+
+    def queued_by(self, card_id: str, list_name: str, ignore: str | None = None) -> str | None:
+        """Username of the member who last put the card in `list_name` (skipping `ignore`), or None."""
+        actions = self._req(
+            "GET", f"/cards/{card_id}/actions", params={"filter": "createCard,updateCard", "limit": 1000}
+        )
+        return queuing_member(actions, self.list_id(list_name), ignore)
+
+    def me(self) -> str:
+        """Lowercase username of the member the API token belongs to."""
+        if self._me is None:
+            self._me = self._req("GET", "/members/me", params={"fields": "username"})["username"].lower()
+        return self._me
 
     def move(self, card_id: str, list_name: str, *, top: bool = True) -> None:
         self._req(
