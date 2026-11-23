@@ -69,6 +69,45 @@ def _warn_if_open_board(cfg: Config) -> None:
         logging.warning("ALLOWED_MEMBERS is empty: any member of the Trello board can queue work")
 
 
+def _doctor_branch_protection(github: GitHubClient, branch: str) -> bool:
+    """Print the branch protection lines for one repository; return False on a problem."""
+    try:
+        bp = github.branch_protection(branch)
+    except Exception as e:  # noqa: BLE001
+        print(f"  branch protection: FAILED: {e}")
+        return False
+    if not bp.readable:
+        print(
+            f"  branch protection: WARNING: could not read protection for {branch} "
+            "(token lacks Administration: read); check it by hand"
+        )
+        return True
+    if not bp.protected:
+        print(f"  branch protection: MISSING on {branch}")
+        return False
+    ok = True
+    if not bp.required_checks:
+        ok = False
+        print(f"  branch protection: no required status checks on {branch}")
+    if bp.force_pushes_allowed:
+        ok = False
+        print(f"  branch protection: force pushes allowed on {branch}")
+    if ok:
+        kind = "" if bp.classic else "rulesets; "
+        print(f"  branch protection: OK ({kind}required checks: {', '.join(bp.required_checks)})")
+    if bp.classic and not bp.enforce_admins:
+        print(
+            "  branch protection: WARNING: admins are not included (enforce_admins off); "
+            "an admin token can bypass the rules"
+        )
+    if bp.rulesets:
+        print(
+            "  branch protection: WARNING: rulesets' bypass actors can't be read with this token; "
+            "make sure nobody can bypass them"
+        )
+    return ok
+
+
 def cmd_doctor(cfg: Config) -> int:
     ok = True
     trello = TrelloClient(cfg.trello_api_key, cfg.trello_token, cfg.trello_board_id)
@@ -91,6 +130,7 @@ def cmd_doctor(cfg: Config) -> int:
             if not perms.get("push"):
                 ok = False
                 print("  token cannot push to this repository")
+            ok = _doctor_branch_protection(github, cfg.base_branch) and ok
         except Exception as e:  # noqa: BLE001
             ok = False
             print(f"GitHub [{label}]: {repo_name} FAILED: {e}")
@@ -113,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("run", help="daemon: process cards as soon as they are queued, serve reports")
     sub.add_parser("run-once", help="process every Queued card now, then exit")
-    sub.add_parser("doctor", help="check Trello, GitHub and Claude credentials")
+    sub.add_parser("doctor", help="check Trello, GitHub (incl. branch protection) and Claude")
     sub.add_parser("setup-board", help="create missing Trello lists and repository labels")
     boot = sub.add_parser("bootstrap", help="give an empty repository its first commit (CI, Makefile, CLAUDE.md)")
     boot.add_argument("repo", help="repository label or owner/repo (must be in REPO_LABELS or DEFAULT_REPO)")

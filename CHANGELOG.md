@@ -7,6 +7,9 @@ All notable changes to lights-out are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `doctor` verifies branch protection (classic rules and rulesets) on `BASE_BRANCH` for every target
+  repository: missing protection, no required checks or allowed force pushes are problems; admins not included,
+  rulesets' bypass actors and an unreadable token (403) are warnings. The README has a new Branch protection section.
 - Merge policy: a PR whose diff matches `HUMAN_REVIEW_PATHS` (CI, dependencies, auth, migrations by default)
   or exceeds `MAX_AUTO_MERGE_LINES` changed lines (default 400; `0` disables) is no longer merged
   automatically. The PR body gets a "Needs human approval" section, the PR and card get a comment with the

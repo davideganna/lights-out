@@ -47,6 +47,7 @@ later, a webhook can replace the poll.
 - **It only pushes to `agent/*` branches** and changes `main` only through a squash-merged PR.
 - **It merges only after CI passes.** If the repository has no CI, it leaves the PR open unless
   `MERGE_WITHOUT_CI=true`.
+- **It expects the base branch to be protected.** See [Branch protection](#branch-protection); `doctor` checks it.
 - **Risky or large changes are left for a human.** Even with green CI, the PR is not merged (the card stays
   in PR Opened, with a comment listing why) if it touches a path matching `HUMAN_REVIEW_PATHS` (CI,
   dependencies, auth, migrations; comma-separated globs, see `.env.example` for the default list) or changes
@@ -65,6 +66,26 @@ later, a webhook can replace the poll.
   PR, CI wait, merge) run to the end instead; if that takes longer than the 30 s `stop_grace_period`
   (e.g. waiting for CI), Docker kills the process and the crash recovery above applies.
 
+## Branch protection
+
+lights-out merges automatically once CI is green. If the base branch (`BASE_BRANCH`, default `main`) of a
+target repository is not protected, nothing stops a direct push or a merge without CI. Set this up on every
+target repository (Settings → Branches → add a branch protection rule, or Settings → Rules → Rulesets):
+
+1. Require a pull request before merging.
+2. Require status checks to pass before merging, and select the CI jobs. For lights-out itself these are
+   `check` and `docker` (from `.github/workflows/ci.yml`).
+3. Block force pushes.
+4. Don't allow bypassing: tick "Do not allow bypassing the above settings" (or "Include administrators");
+   for a ruleset, leave the bypass list empty.
+
+`lights-out doctor` reads both classic protection and active rulesets for `BASE_BRANCH` of every repository
+in `REPO_LABELS` and `DEFAULT_REPO`:
+
+- Problems (exit 1): no protection, no required status checks, or force pushes allowed.
+- Warnings (exit 0): admins not included in classic protection, rulesets (their bypass actors can't be read
+  with a normal token, so check them by hand), and a 403 because the token lacks *Administration: read*.
+
 ## Setup
 
 1. Credentials: copy `.env.example` to `.env` and fill it in.
@@ -78,7 +99,8 @@ later, a webhook can replace the poll.
    - Optional: `HUMAN_REVIEW_PATHS` and `MAX_AUTO_MERGE_LINES` decide which changes need a human to merge;
      see the Safety model.
    - GitHub: a fine-grained token limited to those repositories with *Contents*, *Pull requests* and
-     *Workflows* set to read/write and *Checks* set to read.
+     *Workflows* set to read/write and *Checks* set to read. Optionally add *Administration* set to read so
+     `doctor` can verify branch protection (without it, `doctor` only warns).
    - `TRELLO_BOARD_ID`: the board whose *Queued* column drives the work.
 2. Build and check: `docker compose build && docker compose run --rm lights-out doctor`
    (`doctor` also checks the Claude credentials with a tiny real request, well under one cent)

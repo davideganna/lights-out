@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from lights_out.core.models import Comment, Ticket
-from lights_out.integrations.github import GitHubClient
+from lights_out.integrations.github import GitHubClient, GitHubError
 from lights_out.integrations.trello import TrelloClient, queuing_member
 from lights_out.orchestration.workspace import Workspace, WorkspaceError, run_as
 from lights_out.reporting.report import write_reports
@@ -132,6 +132,90 @@ def test_ci_failure_lists_failed_checks():
 def test_ci_none_after_grace_period():
     gh = _gh([{"check_runs": []}] * 20)
     assert gh.wait_for_ci("sha", timeout_s=600, grace_s=60, poll_s=20)[0] == "none"
+
+
+def _bp(classic, rules=None, rules_status=200):
+    """classic: (status, json); rules: list of rules."""
+
+    def handler(req):
+        if req.url.path.endswith("/branches/main/protection"):
+            return httpx.Response(classic[0], json=classic[1])
+        if req.url.path.endswith("/rules/branches/main"):
+            return httpx.Response(rules_status, json=rules if rules_status == 200 else {})
+        return httpx.Response(500)
+
+    http = httpx.Client(base_url="https://api.github.com", transport=httpx.MockTransport(handler))
+    return GitHubClient("t", "o/r", http=http).branch_protection("main")
+
+
+def _classic(*, checks=True, force=False, admins=True):
+    return (
+        200,
+        {
+            "required_status_checks": {"contexts": ["a", "b"], "checks": [{"context": "b"}, {"context": "c"}]}
+            if checks
+            else None,
+            "allow_force_pushes": {"enabled": force},
+            "enforce_admins": {"enabled": admins},
+        },
+    )
+
+
+def test_bp_classic_and_rules_404_is_unprotected():
+    bp = _bp((404, {}), rules_status=404)
+    assert bp.readable and not bp.protected and not bp.force_pushes_allowed
+
+
+def test_bp_403_is_not_readable_and_does_not_raise():
+    assert _bp((403, {}), []).readable is False
+    assert _bp((404, {}), rules_status=403).readable is False
+
+
+def test_bp_without_required_checks():
+    bp = _bp(_classic(checks=False), [])
+    assert bp.protected and bp.required_checks == [] and not bp.force_pushes_allowed
+
+
+def test_bp_force_pushes_allowed():
+    assert _bp(_classic(force=True), []).force_pushes_allowed is True
+
+
+def test_bp_fully_protected_dedupes_checks():
+    bp = _bp(_classic(), [])
+    assert bp.classic and not bp.rulesets and bp.enforce_admins
+    assert bp.required_checks == ["a", "b", "c"]
+
+
+def test_bp_admins_not_included():
+    assert _bp(_classic(admins=False), []).enforce_admins is False
+
+
+def test_bp_rulesets_only():
+    rules = [
+        {
+            "type": "required_status_checks",
+            "parameters": {"required_status_checks": [{"context": "a"}, {"context": "b"}]},
+        },
+        {"type": "non_fast_forward"},
+    ]
+    bp = _bp((404, {}), rules)
+    assert bp.protected and bp.rulesets and not bp.classic
+    assert bp.required_checks == ["a", "b"] and not bp.force_pushes_allowed
+
+
+def test_bp_rulesets_without_required_checks():
+    bp = _bp((404, {}), [{"type": "non_fast_forward"}])
+    assert bp.protected and bp.required_checks == []
+
+
+def test_bp_classic_with_rules_404():
+    bp = _bp(_classic(), rules_status=404)
+    assert bp.protected and not bp.rulesets
+
+
+def test_bp_server_error_raises():
+    with pytest.raises(GitHubError):
+        _bp((500, {}), [])
 
 
 def test_store_records_a_stage_timeline(tmp_path):

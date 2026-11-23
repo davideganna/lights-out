@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import httpx
@@ -21,6 +21,17 @@ class PullRequest:
     number: int
     url: str
     head_sha: str
+
+
+@dataclass
+class BranchProtection:
+    readable: bool = True  # False when GitHub answered 403 (token cannot read protection)
+    protected: bool = False
+    classic: bool = False
+    rulesets: bool = False
+    required_checks: list[str] = field(default_factory=list)
+    force_pushes_allowed: bool = False
+    enforce_admins: bool = False
 
 
 class GitHubClient:
@@ -116,3 +127,54 @@ class GitHubClient:
             self._req("DELETE", f"/repos/{self.repo}/git/refs/heads/{branch}")
         except GitHubError:
             pass  # already gone, or protected; not worth failing a merged ticket over
+
+    def _get_raw(self, path: str, **kw) -> httpx.Response:
+        """GET without raising on error statuses (callers map 403/404 themselves)."""
+        return self._http.request("GET", path, **kw)
+
+    def branch_protection(self, branch: str) -> BranchProtection:
+        """Read classic branch protection and active rulesets for a branch and combine them."""
+        classic_path = f"/repos/{self.repo}/branches/{branch}/protection"
+        r = self._get_raw(classic_path)
+        if r.status_code == 403:
+            return BranchProtection(readable=False)
+        if r.status_code >= 400 and r.status_code != 404:
+            raise GitHubError(f"GitHub GET {classic_path} -> {r.status_code}: {r.text[:300]}")
+        classic = r.status_code == 200
+        checks: list[str] = []
+        classic_blocks_force = False
+        enforce_admins = False
+        if classic:
+            data = r.json() or {}
+            rsc = data.get("required_status_checks") or {}
+            checks += list(rsc.get("contexts") or [])
+            checks += [c["context"] for c in rsc.get("checks") or [] if c.get("context")]
+            classic_blocks_force = not (data.get("allow_force_pushes") or {}).get("enabled", False)
+            enforce_admins = bool((data.get("enforce_admins") or {}).get("enabled", False))
+
+        rules_path = f"/repos/{self.repo}/rules/branches/{branch}"
+        rr = self._get_raw(rules_path, params={"per_page": 100})
+        if rr.status_code == 403:
+            return BranchProtection(readable=False)
+        if rr.status_code >= 400 and rr.status_code != 404:
+            raise GitHubError(f"GitHub GET {rules_path} -> {rr.status_code}: {rr.text[:300]}")
+        rules = (rr.json() or []) if rr.status_code == 200 else []
+        rulesets = bool(rules)
+        rules_block_force = False
+        for rule in rules:
+            if rule.get("type") == "required_status_checks":
+                params = rule.get("parameters") or {}
+                checks += [c["context"] for c in params.get("required_status_checks") or [] if c.get("context")]
+            elif rule.get("type") == "non_fast_forward":
+                rules_block_force = True
+
+        protected = classic or rulesets
+        return BranchProtection(
+            readable=True,
+            protected=protected,
+            classic=classic,
+            rulesets=rulesets,
+            required_checks=list(dict.fromkeys(checks)),
+            force_pushes_allowed=protected and not (classic_blocks_force or rules_block_force),
+            enforce_admins=enforce_admins,
+        )
