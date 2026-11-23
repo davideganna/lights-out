@@ -64,6 +64,11 @@ def _route_for(cfg: Config, name: str) -> Route:
     raise ConfigError(f"{name!r} is not in REPO_LABELS or DEFAULT_REPO")
 
 
+def _warn_if_open_board(cfg: Config) -> None:
+    if not cfg.allowed_members:
+        logging.warning("ALLOWED_MEMBERS is empty: any member of the Trello board can queue work")
+
+
 def cmd_doctor(cfg: Config) -> int:
     ok = True
     trello = TrelloClient(cfg.trello_api_key, cfg.trello_token, cfg.trello_board_id)
@@ -89,6 +94,10 @@ def cmd_doctor(cfg: Config) -> int:
         except Exception as e:  # noqa: BLE001
             ok = False
             print(f"GitHub [{label}]: {repo_name} FAILED: {e}")
+    if cfg.allowed_members:
+        print("Allowed members: " + ", ".join(f"@{m}" for m in cfg.allowed_members))
+    else:
+        print("Allowed members: WARNING: ALLOWED_MEMBERS is empty, any board member can queue work")
     try:
         model = check_claude(cfg)
         print(f"Claude: OK (model {model})")
@@ -149,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         asyncio.run(run_until_signal(scheduler.run_now(), stop=scheduler.stop))
         return 0
     if args.command == "run":
+        _warn_if_open_board(cfg)
         serve_reports(cfg)
         asyncio.run(run_until_signal(scheduler.run_forever(), stop=scheduler.stop))
     return 0

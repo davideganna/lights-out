@@ -25,6 +25,16 @@ def _repo_labels(spec: str) -> dict[str, str]:
         raise ConfigError(str(e)) from e
 
 
+def parse_members(spec: str) -> list[str]:
+    """Comma-separated Trello usernames -> lowercase, no '@', no blanks or duplicates."""
+    out: list[str] = []
+    for part in spec.split(","):
+        name = part.strip().lstrip("@").strip().lower()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
 def _get(name: str, default: str | None = None, *, required: bool = False) -> str:
     value = os.environ.get(name, default)
     if required and not value:
@@ -72,6 +82,8 @@ class Config:
     github_token: str
     # Trello label -> "owner/repo"; a card's label picks the repository it is about.
     repo_labels: dict[str, str] = field(default_factory=dict)
+    # Trello usernames (lowercase) whose queued cards are processed; empty = any board member
+    allowed_members: list[str] = field(default_factory=list)
     default_repo: str = ""  # used for cards with no repository label; empty = ask for a label
     base_branch: str = "main"
     lists: Lists = field(default_factory=Lists)
@@ -127,6 +139,7 @@ class Config:
             trello_board_id=_get("TRELLO_BOARD_ID", required=True),
             github_token=_get("GITHUB_TOKEN", required=True),
             repo_labels=_repo_labels(_get("REPO_LABELS", "")),
+            allowed_members=parse_members(_get("ALLOWED_MEMBERS", "")),
             default_repo=_get("DEFAULT_REPO", ""),
             base_branch=_get("BASE_BRANCH", "main"),
             lists=Lists(

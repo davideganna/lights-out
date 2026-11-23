@@ -12,6 +12,9 @@ All notable changes to lights-out are documented here. The format follows
   normal-vision separation in light and dark mode.
 
 ### Added
+- `ALLOWED_MEMBERS` setting: only cards queued (moved or created into the ready list) by listed Trello
+  usernames are processed; others go to Needs Info with no agent call. Comments from other members are
+  hidden from the agents. `run` warns and `doctor` reports when the list is empty.
 - `doctor` checks Claude authentication: it fails if neither `CLAUDE_CODE_OAUTH_TOKEN` nor `ANTHROPIC_API_KEY`
   is set, otherwise makes a one-turn request with `PLANNER_MODEL`.
 - Graceful shutdown: on SIGTERM or SIGINT (`docker compose stop`, Ctrl-C) lights-out stops picking up cards,

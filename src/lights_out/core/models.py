@@ -11,6 +11,7 @@ class Comment:
     author: str
     text: str
     date: str
+    username: str = ""
 
 
 @dataclass
