@@ -9,6 +9,7 @@ from lights_out import cli
 from lights_out.agents import agents
 from lights_out.agents.agents import AgentError, check_claude
 from lights_out.core.config import Config
+from lights_out.integrations.github import BranchProtection
 
 
 @pytest.fixture
@@ -21,6 +22,15 @@ def cfg(tmp_path) -> Config:
         repo_labels={"app": "o/app"},
         data_dir=tmp_path / "data",
     )
+
+
+PROTECTION: dict = {}
+
+
+def _full(**kw) -> BranchProtection:
+    base = dict(protected=True, classic=True, required_checks=["check", "docker"], enforce_admins=True)
+    base.update(kw)
+    return BranchProtection(**base)
 
 
 @pytest.fixture(autouse=True)
@@ -39,6 +49,13 @@ def other_checks(monkeypatch, cfg):
         def _req(self, method, path):
             return {"full_name": "o/app", "permissions": {"push": True}, "default_branch": "main"}
 
+        def branch_protection(self, branch):
+            result = PROTECTION["value"]
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+    PROTECTION["value"] = _full()
     monkeypatch.setattr(cli, "TrelloClient", FakeTrello)
     monkeypatch.setattr(cli, "GitHubClient", FakeGitHub)
 
@@ -138,6 +155,69 @@ def test_doctor_warns_on_empty_allow_list_without_failing(monkeypatch, cfg, caps
     monkeypatch.setattr(cli, "check_claude", lambda c: "m")
     assert cli.cmd_doctor(cfg) == 0
     assert "WARNING: ALLOWED_MEMBERS is empty" in capsys.readouterr().out
+
+
+def _doctor(monkeypatch, cfg, capsys, result):
+    monkeypatch.setattr(cli, "check_claude", lambda c: "m")
+    PROTECTION["value"] = result
+    code = cli.cmd_doctor(cfg)
+    return code, capsys.readouterr().out
+
+
+def test_doctor_branch_protection_missing(monkeypatch, cfg, capsys):
+    code, out = _doctor(monkeypatch, cfg, capsys, BranchProtection())
+    assert code == 1 and "  branch protection: MISSING on main" in out
+
+
+def test_doctor_branch_protection_unreadable_warns(monkeypatch, cfg, capsys):
+    code, out = _doctor(monkeypatch, cfg, capsys, BranchProtection(readable=False))
+    assert code == 0 and "branch protection: WARNING: could not read protection for main" in out
+    assert "check it by hand" in out
+
+
+def test_doctor_branch_protection_no_checks(monkeypatch, cfg, capsys):
+    code, out = _doctor(monkeypatch, cfg, capsys, _full(required_checks=[]))
+    assert code == 1 and "no required status checks on main" in out
+
+
+def test_doctor_branch_protection_force_pushes(monkeypatch, cfg, capsys):
+    code, out = _doctor(monkeypatch, cfg, capsys, _full(force_pushes_allowed=True))
+    assert code == 1 and "force pushes allowed on main" in out
+
+
+def test_doctor_branch_protection_both_problems(monkeypatch, cfg, capsys):
+    code, out = _doctor(monkeypatch, cfg, capsys, _full(required_checks=[], force_pushes_allowed=True))
+    assert code == 1 and "no required status checks" in out and "force pushes allowed" in out
+
+
+def test_doctor_branch_protection_ok(monkeypatch, cfg, capsys):
+    code, out = _doctor(monkeypatch, cfg, capsys, _full())
+    assert code == 0 and "  branch protection: OK (required checks: check, docker)" in out
+    assert "WARNING: admins" not in out
+
+
+def test_doctor_branch_protection_admins_not_included_warns(monkeypatch, cfg, capsys):
+    code, out = _doctor(monkeypatch, cfg, capsys, _full(enforce_admins=False))
+    assert code == 0 and "OK (required checks: check, docker)" in out
+    assert "WARNING: admins are not included (enforce_admins off)" in out
+
+
+def test_doctor_branch_protection_rulesets_only(monkeypatch, cfg, capsys):
+    bp = BranchProtection(protected=True, rulesets=True, required_checks=["a", "b"])
+    code, out = _doctor(monkeypatch, cfg, capsys, bp)
+    assert code == 0 and "OK (rulesets; required checks: a, b)" in out
+    assert "bypass actors can't be read" in out
+
+
+def test_doctor_branch_protection_rulesets_without_checks(monkeypatch, cfg, capsys):
+    bp = BranchProtection(protected=True, rulesets=True)
+    code, out = _doctor(monkeypatch, cfg, capsys, bp)
+    assert code == 1 and "no required status checks" in out
+
+
+def test_doctor_branch_protection_error(monkeypatch, cfg, capsys):
+    code, out = _doctor(monkeypatch, cfg, capsys, RuntimeError("boom"))
+    assert code == 1 and "branch protection: FAILED: boom" in out
 
 
 def test_warn_if_open_board(cfg, caplog):
