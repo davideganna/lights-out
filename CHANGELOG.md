@@ -6,6 +6,12 @@ All notable changes to lights-out are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Merge policy: a PR whose diff matches `HUMAN_REVIEW_PATHS` (CI, dependencies, auth, migrations by default)
+  or exceeds `MAX_AUTO_MERGE_LINES` changed lines (default 400; `0` disables) is no longer merged
+  automatically. The PR body gets a "Needs human approval" section, the PR and card get a comment with the
+  reasons, and the run ends as `pr_open`. An empty `HUMAN_REVIEW_PATHS` disables path holds.
+
 ### Fixed
 - Dashboard: Interrupted (violet) and Declined (gray) no longer share a colour; Running moved to teal so it
   stays distinct from Interrupted. Red remains reserved for Failed. All pairs checked for colour-blind and

@@ -14,6 +14,29 @@ from .routing import parse_repo_labels
 _ORCHESTRATOR_SECRETS = ("GITHUB_TOKEN", "TRELLO_API_KEY", "TRELLO_TOKEN")
 
 
+DEFAULT_HUMAN_REVIEW_PATHS: tuple[str, ...] = (
+    ".github/**",
+    "Dockerfile*",
+    "docker/**",
+    "Makefile",
+    "pyproject.toml",
+    "requirements*.txt",
+    "setup.py",
+    "setup.cfg",
+    "package.json",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "go.mod",
+    "go.sum",
+    "Cargo.toml",
+    "Cargo.lock",
+    "**/migrations/**",
+    "**/auth/**",
+    "**/*auth*.py",
+)
+
+
 class ConfigError(RuntimeError):
     pass
 
@@ -33,6 +56,11 @@ def parse_members(spec: str) -> list[str]:
         if name and name not in out:
             out.append(name)
     return out
+
+
+def parse_patterns(spec: str) -> list[str]:
+    """Comma-separated glob patterns -> list, with blanks dropped."""
+    return [p.strip() for p in spec.split(",") if p.strip()]
 
 
 def _get(name: str, default: str | None = None, *, required: bool = False) -> str:
@@ -104,6 +132,10 @@ class Config:
     ci_timeout_s: int = 1800
     ci_grace_s: int = 180
     merge_without_ci: bool = False
+    # Changes touching these paths (glob patterns) or exceeding this many changed
+    # lines (added + deleted) are left open for a human instead of auto-merged.
+    human_review_paths: list[str] = field(default_factory=lambda: list(DEFAULT_HUMAN_REVIEW_PATHS))
+    max_auto_merge_lines: int = 400  # 0 disables the size limit
 
     # How often to check the Queued column for new cards
     poll_seconds: int = 15
@@ -158,6 +190,8 @@ class Config:
             ci_timeout_s=int(_get("CI_TIMEOUT_S", "1800")),
             ci_grace_s=int(_get("CI_GRACE_S", "180")),
             merge_without_ci=_get("MERGE_WITHOUT_CI", "false").lower() == "true",
+            human_review_paths=parse_patterns(_get("HUMAN_REVIEW_PATHS", ",".join(DEFAULT_HUMAN_REVIEW_PATHS))),
+            max_auto_merge_lines=int(_get("MAX_AUTO_MERGE_LINES", "400")),
             poll_seconds=int(_get("POLL_SECONDS", "15")),
             data_dir=Path(_get("DATA_DIR", "/data")),
             agent_user=_get("AGENT_USER", ""),
