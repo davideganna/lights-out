@@ -84,6 +84,7 @@ class FakeAgents:
     raise_budget: bool = False
     spent_usd: float = 0.0
     calls: list[str] = field(default_factory=list)
+    seen_flags: list[list[str]] = field(default_factory=list)
 
     async def triage(self, ticket, cwd):
         self.calls.append("triage")
@@ -105,8 +106,9 @@ class FakeAgents:
         self.spent_usd += 0.5
         return AgentResult("Fixed", session_id, 0.5)
 
-    async def review(self, ticket, diff, cwd):
+    async def review(self, ticket, diff, cwd, risk_flags=None):
         self.calls.append("review")
+        self.seen_flags.append(list(risk_flags or []))
         assert "feature.txt" in diff
         approved = self.reviews.pop(0)
         return ReviewResult(approved, [] if approved else ["needs more tests"], "looks fine")
@@ -198,6 +200,7 @@ async def test_happy_path_merges_and_moves_to_done(cfg, origin):
     assert trello.moves == ["Triaged", "In Progress", "Verifying", "Reviewing", "PR Opened", "Done"]
     assert branch_file(origin, TICKET.branch, "feature.txt") == "ok"
     assert gh.prs[0]["head"] == TICKET.branch and gh.prs[0]["base"] == "main"
+    assert "## Risk flags\nnone" in gh.prs[0]["body"]
     run = store.day_runs("2026-11-22")[0]
     assert run.status == "merged" and run.pr_url and run.cost_usd == pytest.approx(1.1)
 
@@ -438,3 +441,20 @@ async def test_card_requeued_by_lights_out_is_checked_against_the_original_membe
     pipe2, trello2, _ = make(cfg, origin, FakeAgents(), FakeGitHub())
     trello2.actions = trello.actions
     assert (await pipe2.process(TICKET, "n2", budget_usd=10)).status == "needs_info"
+
+
+class MakefileAgents(FakeAgents):
+    async def implement(self, ticket, plan, cwd):
+        (Path(cwd) / "Makefile").write_text("check:\n\ttrue\n")
+        return await super().implement(ticket, plan, cwd)
+
+
+async def test_risk_flags_reach_the_reviewer_and_the_pr_body(cfg, origin):
+    agents, gh = MakefileAgents(), FakeGitHub("success")
+    pipe, _, _ = make(cfg, origin, agents, gh)
+    out = await pipe.process(TICKET, "2026-11-22", budget_usd=10)
+    assert out.status == "merged", out.error
+    assert any("Makefile" in f for f in agents.seen_flags[0])
+    body = gh.prs[0]["body"]
+    assert "## Risk flags\n- CI or check command changed: Makefile" in body
+    assert gh.merged
