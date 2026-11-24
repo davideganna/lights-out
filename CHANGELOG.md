@@ -7,6 +7,9 @@ All notable changes to lights-out are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- When CI fails on the PR, the failure logs (GitHub Actions job logs, or the check summary when the token
+  lacks *Actions: read*) are sent back to the coder, which fixes and pushes again; the fix must pass
+  `make check` and one review. Controlled by `MAX_CI_FIX_ATTEMPTS` (default 2, `0` keeps the old behaviour).
 - `doctor` verifies branch protection (classic rules and rulesets) on `BASE_BRANCH` for every target
   repository: missing protection, no required checks or allowed force pushes are problems; admins not included,
   rulesets' bypass actors and an unreadable token (403) are warnings. The README has a new Branch protection section.

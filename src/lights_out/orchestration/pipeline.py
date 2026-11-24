@@ -141,8 +141,8 @@ class Pipeline:
                 session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage)
 
             set_stage("deliver")
-            return self._deliver(
-                ticket, ws, github, run_id, agents.spent_usd, summary, review.summary, triage.plan, flags
+            return await self._deliver(
+                ticket, ws, github, run_id, agents, session, set_stage, summary, review.summary, triage.plan, flags
             )
 
         except EmptyRepositoryError:
@@ -247,76 +247,103 @@ class Pipeline:
         self.store.finish(run_id, status="needs_info", cost_usd=cost, summary=summary)
         return Outcome("needs_info", summary=summary)
 
-    def _deliver(
+    async def _deliver(
         self,
         ticket: Ticket,
         ws: Workspace,
         github: GitHubClient,
         run_id: int,
-        cost: float,
+        agents: AgentsProtocol,
+        session: str,
+        set_stage: Callable[[str], None],
         summary: str,
         review_summary: str,
         plan: str,
         risk_flags: list[str],
     ) -> Outcome:
         lists, cfg = self.cfg.lists, self.cfg
-        ws.kill_agent_processes()
-        ws.commit(f"{ticket.title} (#{ticket.short_id})\n\nTrello: {ticket.url}")
-        reasons = merge_policy(ws.changed_files(), cfg)
-        sha = ws.push(ticket.branch)
-        approval = "## Needs human approval\n" + "".join(f"- {r}\n" for r in reasons) + "\n" if reasons else ""
-        footer = (
-            "_Opened by lights-out. Needs human approval before merging._"
-            if reasons
-            else "_Opened by lights-out. Merged automatically once CI passes._"
-        )
-        body = (
-            f"Implements Trello card [#{ticket.short_id}]({ticket.url}).\n\n## Summary\n{summary}\n\n"
-            f"## Review\n{review_summary}\n\n## Risk flags\n{format_risk_flags(risk_flags)}\n\n"
-            f"{approval}"
-            f"<details><summary>Plan</summary>\n\n{plan}\n</details>\n\n"
-            f"{footer}"
-        )
-        pr = github.open_or_update_pr(
-            head=ticket.branch, base=cfg.base_branch, title=ticket.title, body=body, head_sha=sha
-        )
-        self._move(ticket.id, lists.pr_opened)
-        self.trello.comment(ticket.id, f"{BOT} opened {pr.url}; waiting for CI.")
-        self.store.stage(run_id, "ci", cost)
-        self._refresh_dashboard()
-        ci, failed = github.wait_for_ci(sha, timeout_s=cfg.ci_timeout_s, grace_s=cfg.ci_grace_s)
+        for attempt in range(cfg.max_ci_fix_attempts + 1):
+            ws.kill_agent_processes()
+            ws.commit(f"{ticket.title} (#{ticket.short_id})\n\nTrello: {ticket.url}")
+            reasons = merge_policy(ws.changed_files(), cfg)
+            sha = ws.push(ticket.branch)
+            approval = "## Needs human approval\n" + "".join(f"- {r}\n" for r in reasons) + "\n" if reasons else ""
+            footer = (
+                "_Opened by lights-out. Needs human approval before merging._"
+                if reasons
+                else "_Opened by lights-out. Merged automatically once CI passes._"
+            )
+            body = (
+                f"Implements Trello card [#{ticket.short_id}]({ticket.url}).\n\n## Summary\n{summary}\n\n"
+                f"## Review\n{review_summary}\n\n## Risk flags\n{format_risk_flags(risk_flags)}\n\n"
+                f"{approval}"
+                f"<details><summary>Plan</summary>\n\n{plan}\n</details>\n\n"
+                f"{footer}"
+            )
+            pr = github.open_or_update_pr(
+                head=ticket.branch, base=cfg.base_branch, title=ticket.title, body=body, head_sha=sha
+            )
+            self._move(ticket.id, lists.pr_opened)
+            self.trello.comment(ticket.id, f"{BOT} opened {pr.url}; waiting for CI.")
+            set_stage("ci")
+            ci, failed = github.wait_for_ci(sha, timeout_s=cfg.ci_timeout_s, grace_s=cfg.ci_grace_s)
+            cost = agents.spent_usd
 
-        if ci == "success" or (ci == "none" and cfg.merge_without_ci):
-            if reasons:
-                bullets = "".join(f"- {r}\n" for r in reasons)
-                github.comment_pr(
-                    pr.number,
-                    f"{BOT} did not merge this: it needs human approval.\n\n{bullets}\n"
-                    "A human must review and merge this PR.",
-                )
-                self.trello.comment(
-                    ticket.id,
-                    f"{BOT} opened {pr.url} and CI passed, but it needs human approval before merging:\n\n"
-                    f"{bullets}\nA human must review and merge it.",
-                )
-                self._move(ticket.id, lists.pr_opened)
-                reason = "needs human approval: " + "; ".join(reasons)
-                self.store.finish(run_id, status="pr_open", cost_usd=cost, summary=summary, pr_url=pr.url, error=reason)
-                return Outcome("pr_open", summary=summary, pr_url=pr.url, error=reason)
-            github.merge(pr.number, title=f"{ticket.title} (#{pr.number})")
-            github.delete_branch(ticket.branch)
-            self.trello.comment(ticket.id, f"{BOT} implemented and merged this: {pr.url}\n\n{summary}")
-            self.trello.move(ticket.id, lists.done)
-            self.store.finish(run_id, status="merged", cost_usd=cost, summary=summary, pr_url=pr.url)
-            ws.cleanup()
-            return Outcome("merged", summary=summary, pr_url=pr.url)
+            if ci == "success" or (ci == "none" and cfg.merge_without_ci):
+                if reasons:
+                    bullets = "".join(f"- {r}\n" for r in reasons)
+                    github.comment_pr(
+                        pr.number,
+                        f"{BOT} did not merge this: it needs human approval.\n\n{bullets}\n"
+                        "A human must review and merge this PR.",
+                    )
+                    self.trello.comment(
+                        ticket.id,
+                        f"{BOT} opened {pr.url} and CI passed, but it needs human approval before merging:\n\n"
+                        f"{bullets}\nA human must review and merge it.",
+                    )
+                    self._move(ticket.id, lists.pr_opened)
+                    reason = "needs human approval: " + "; ".join(reasons)
+                    self.store.finish(
+                        run_id, status="pr_open", cost_usd=cost, summary=summary, pr_url=pr.url, error=reason
+                    )
+                    return Outcome("pr_open", summary=summary, pr_url=pr.url, error=reason)
+                github.merge(pr.number, title=f"{ticket.title} (#{pr.number})")
+                github.delete_branch(ticket.branch)
+                self.trello.comment(ticket.id, f"{BOT} implemented and merged this: {pr.url}\n\n{summary}")
+                self.trello.move(ticket.id, lists.done)
+                self.store.finish(run_id, status="merged", cost_usd=cost, summary=summary, pr_url=pr.url)
+                ws.cleanup()
+                return Outcome("merged", summary=summary, pr_url=pr.url)
 
-        reason = {
-            "failure": f"CI failed ({', '.join(failed)})",
-            "timeout": f"CI didn't finish within {cfg.ci_timeout_s // 60} minutes",
-            "none": "the repository has no CI checks, and MERGE_WITHOUT_CI is off",
-        }[ci]
-        self.trello.comment(ticket.id, f"{BOT} opened {pr.url} but didn't merge it: {reason}. Please take a look.")
-        self._move(ticket.id, lists.failed or lists.needs_info)
-        self.store.finish(run_id, status="pr_open", cost_usd=cost, summary=summary, pr_url=pr.url, error=reason)
-        return Outcome("pr_open", summary=summary, pr_url=pr.url, error=reason)
+            if ci == "failure" and attempt < cfg.max_ci_fix_attempts:
+                set_stage(f"ci fix {attempt + 1}")
+                self._move(ticket.id, lists.in_progress)
+                logs = "\n\n".join(f"### {name}\n```\n{text}\n```" for name, text in github.ci_failure_logs(sha))
+                fix = await agents.follow_up(
+                    session, prompts.FIX_CI.format(logs=logs, check_command=cfg.check_command), ws.path
+                )
+                session, summary = fix.session_id, fix.text
+                session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage)
+                set_stage(f"ci review {attempt + 1}")
+                self._move(ticket.id, lists.reviewing)
+                flags = find_risk_flags(ws.diff_vs_base(limit=10**9))
+                review = await agents.review(ticket, ws.diff_vs_base(), ws.path, risk_flags=flags)
+                if not review.approved:
+                    issues = "\n".join(f"- {i}" for i in review.issues) or review.summary
+                    raise StageFailed("review", "The reviewer rejected the CI fix.", issues)
+                review_summary, risk_flags = review.summary, flags
+                set_stage("deliver")
+                continue
+
+            reason = {
+                "failure": f"CI failed ({', '.join(failed)})"
+                + (f" after {attempt} CI fix attempt(s)" if cfg.max_ci_fix_attempts > 0 else ""),
+                "timeout": f"CI didn't finish within {cfg.ci_timeout_s // 60} minutes",
+                "none": "the repository has no CI checks, and MERGE_WITHOUT_CI is off",
+            }[ci]
+            self.trello.comment(ticket.id, f"{BOT} opened {pr.url} but didn't merge it: {reason}. Please take a look.")
+            self._move(ticket.id, lists.failed or lists.needs_info)
+            self.store.finish(run_id, status="pr_open", cost_usd=cost, summary=summary, pr_url=pr.url, error=reason)
+            return Outcome("pr_open", summary=summary, pr_url=pr.url, error=reason)
+        raise AssertionError("unreachable")  # the last attempt always returns above

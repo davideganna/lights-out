@@ -87,6 +87,16 @@ A senior reviewer looked at your diff and requested changes:
 
 Address every point, keep `{check_command}` passing, then reply with an updated summary."""
 
+FIX_CI = """\
+CI failed on the branch you pushed. The output of the failed checks:
+
+{logs}
+
+Fix the cause (for example a missing dependency, or something that only fails on a clean \
+machine) and keep `{check_command}` passing. Do not skip, delete, weaken or mark tests as \
+expected failures, and do not change the CI configuration to make it pass. Then reply with an \
+updated summary."""
+
 REVIEW_SYSTEM = """\
 You are a senior engineer reviewing a pull request written by an autonomous \
 agent. If you approve, it is merged automatically, so you are the last human-like \

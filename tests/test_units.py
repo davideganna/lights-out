@@ -331,3 +331,87 @@ def test_queuing_member_skips_ignored_member():
     assert queuing_member(actions, "Q") == "Lights-Out-Bot"
     assert queuing_member(actions, "Q", ignore="lights-out-bot") == "alice"
     assert queuing_member(actions[1:], "Q", ignore="lights-out-bot") is None
+
+
+# --- CI failure logs ---------------------------------------------------------------
+def _logs_client(runs, logs_handler, seen):
+    def handler(req):
+        seen.append(req)
+        if req.url.host == "api.github.com" and req.url.path.endswith("/check-runs"):
+            return httpx.Response(200, json={"check_runs": runs})
+        return logs_handler(req)
+
+    http = httpx.Client(
+        base_url="https://api.github.com",
+        headers={"Authorization": "Bearer t"},
+        transport=httpx.MockTransport(handler),
+    )
+    return GitHubClient("t", "o/r", http=http)
+
+
+def _actions_run(id=42, slug="github-actions", conclusion="failure", name="test", output=None):
+    return {
+        "id": id,
+        "name": name,
+        "status": "completed",
+        "conclusion": conclusion,
+        "app": {"slug": slug},
+        "output": output or {"title": None, "summary": None, "text": None},
+    }
+
+
+def _redirecting(log):
+    def handler(req):
+        if req.url.path == "/repos/o/r/actions/jobs/42/logs":
+            return httpx.Response(
+                302, headers={"Location": "https://results-receiver.actions.githubusercontent.com/log.txt"}
+            )
+        return httpx.Response(200, text=log)
+
+    return handler
+
+
+def test_ci_failure_logs_follow_the_redirect_without_leaking_the_token():
+    seen: list = []
+    gh = _logs_client([_actions_run()], _redirecting("step failed: boom"), seen)
+    assert gh.ci_failure_logs("sha") == [("test", "step failed: boom")]
+    api = [r for r in seen if r.url.path.endswith("/logs")][0]
+    target = [r for r in seen if r.url.host == "results-receiver.actions.githubusercontent.com"][0]
+    assert api.headers["Authorization"] == "Bearer t"
+    assert "Authorization" not in target.headers
+
+
+def test_ci_failure_logs_keep_the_last_8000_characters():
+    log = "".join(chr(97 + i % 26) for i in range(20000))
+    gh = _logs_client([_actions_run()], _redirecting(log), [])
+    [(_, text)] = gh.ci_failure_logs("sha")
+    assert text == log[-8000:] and len(text) == 8000
+
+
+def test_ci_failure_logs_fall_back_to_the_output_on_403():
+    out = {"title": "Tests failed", "summary": "1 failed", "text": "details here"}
+    gh = _logs_client([_actions_run(output=out)], lambda req: httpx.Response(403, json={}), [])
+    [(name, text)] = gh.ci_failure_logs("sha")
+    assert name == "test"
+    assert "Tests failed" in text and "1 failed" in text and "details here" in text
+    assert "full log couldn't be read" in text
+
+
+def test_ci_failure_logs_for_other_apps_use_the_output_only():
+    def handler(req):
+        raise AssertionError(f"unexpected request {req.url}")
+
+    out = {"title": "Lint", "summary": None, "text": "bad style"}
+    gh = _logs_client([_actions_run(slug="other-ci", output=out)], handler, [])
+    [(_, text)] = gh.ci_failure_logs("sha")
+    assert "Lint" in text and "bad style" in text and "couldn't be read" in text
+
+
+def test_ci_failure_logs_only_include_failed_runs():
+    runs = [
+        _actions_run(id=1, name="ok", conclusion="success"),
+        _actions_run(id=2, name="skip", conclusion="skipped"),
+        _actions_run(id=42, name="bad"),
+    ]
+    gh = _logs_client(runs, _redirecting("x"), [])
+    assert [n for n, _ in gh.ci_failure_logs("sha")] == ["bad"]
