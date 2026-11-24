@@ -20,7 +20,9 @@ def _failed_runs(runs: list[dict]) -> list[dict]:
 
 
 class GitHubError(RuntimeError):
-    pass
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 @dataclass
@@ -67,7 +69,7 @@ class GitHubClient:
     def _req(self, method: str, path: str, **kw):
         r = self._http.request(method, path, **kw)
         if r.status_code >= 400:
-            raise GitHubError(f"GitHub {method} {path} -> {r.status_code}: {r.text[:300]}")
+            raise GitHubError(f"GitHub {method} {path} -> {r.status_code}: {r.text[:300]}", status=r.status_code)
         return r.json() if r.content else None
 
     def create_pr(self, *, head: str, base: str, title: str, body: str) -> PullRequest:

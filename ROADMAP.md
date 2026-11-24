@@ -38,7 +38,7 @@ The phases are in priority order. Each item is a candidate ticket.
 ## Phase 3: Reliability
 
 - [x] Feed CI failure logs back to the coder and retry, like the local `make check` loop
-- [ ] Rebase onto a moved base branch and re-check before merging; resolve simple conflicts
+- [x] Rebase onto a moved base branch and re-check before merging; resolve simple conflicts
 - [ ] React to PR review comments: a human comment on the PR triggers a revision
 - [ ] Health: heartbeat plus alerts (Slack or email) when a card fails or the service stops
 - [x] Interactive dashboard: outcomes, merge rate, spend, time and cost per stage, per-repository metrics,

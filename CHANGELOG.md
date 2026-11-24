@@ -7,6 +7,11 @@ All notable changes to lights-out are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Before merging, the base branch is checked for new commits. If it moved, the branch is rebased onto it; the
+  coder resolves simple conflicts (no conflict markers may remain, otherwise the card fails and the rebase is
+  aborted), then `make check`, one review (only when conflicts were resolved), the merge policy and CI run
+  again. At most 2 rebases per card. A 405/409 answer from GitHub's merge call is treated as a moved base
+  once (rebase and retry).
 - When CI fails on the PR, the failure logs (GitHub Actions job logs, or the check summary when the token
   lacks *Actions: read*) are sent back to the coder, which fixes and pushes again; the fix must pass
   `make check` and one review. Controlled by `MAX_CI_FIX_ATTEMPTS` (default 2, `0` keeps the old behaviour).

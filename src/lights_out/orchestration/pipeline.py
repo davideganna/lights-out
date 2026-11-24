@@ -14,16 +14,17 @@ from ..agents.risk import find_risk_flags, format_risk_flags
 from ..core.config import Config
 from ..core.models import Ticket
 from ..core.routing import Route, RoutingError, resolve
-from ..integrations.github import GitHubClient
+from ..integrations.github import GitHubClient, GitHubError
 from ..integrations.trello import TrelloClient
 from ..reporting.report import write_reports
 from ..reporting.store import Store
 from .policy import merge_policy
-from .workspace import EmptyRepositoryError, Workspace
+from .workspace import EmptyRepositoryError, Workspace, WorkspaceError
 
 log = logging.getLogger(__name__)
 
 BOT = "🤖 **lights-out**"
+MAX_REBASES = 2
 
 
 class StageFailed(RuntimeError):
@@ -262,7 +263,10 @@ class Pipeline:
         risk_flags: list[str],
     ) -> Outcome:
         lists, cfg = self.cfg.lists, self.cfg
-        for attempt in range(cfg.max_ci_fix_attempts + 1):
+        ci_fixes = 0
+        rebases = 0
+        merge_retry_used = False
+        while True:
             ws.kill_agent_processes()
             ws.commit(f"{ticket.title} (#{ticket.short_id})\n\nTrello: {ticket.url}")
             reasons = merge_policy(ws.changed_files(), cfg)
@@ -308,7 +312,21 @@ class Pipeline:
                         run_id, status="pr_open", cost_usd=cost, summary=summary, pr_url=pr.url, error=reason
                     )
                     return Outcome("pr_open", summary=summary, pr_url=pr.url, error=reason)
-                github.merge(pr.number, title=f"{ticket.title} (#{pr.number})")
+                if ws.base_moved():
+                    session, summary, review_summary, risk_flags, rebases = await self._rebase(
+                        ticket, ws, agents, session, set_stage, summary, review_summary, risk_flags, rebases
+                    )
+                    continue
+                try:
+                    github.merge(pr.number, title=f"{ticket.title} (#{pr.number})")
+                except GitHubError as e:
+                    if e.status in (405, 409) and not merge_retry_used:
+                        merge_retry_used = True
+                        session, summary, review_summary, risk_flags, rebases = await self._rebase(
+                            ticket, ws, agents, session, set_stage, summary, review_summary, risk_flags, rebases
+                        )
+                        continue
+                    raise
                 github.delete_branch(ticket.branch)
                 self.trello.comment(ticket.id, f"{BOT} implemented and merged this: {pr.url}\n\n{summary}")
                 self.trello.move(ticket.id, lists.done)
@@ -316,8 +334,9 @@ class Pipeline:
                 ws.cleanup()
                 return Outcome("merged", summary=summary, pr_url=pr.url)
 
-            if ci == "failure" and attempt < cfg.max_ci_fix_attempts:
-                set_stage(f"ci fix {attempt + 1}")
+            if ci == "failure" and ci_fixes < cfg.max_ci_fix_attempts:
+                ci_fixes += 1
+                set_stage(f"ci fix {ci_fixes}")
                 self._move(ticket.id, lists.in_progress)
                 logs = "\n\n".join(f"### {name}\n```\n{text}\n```" for name, text in github.ci_failure_logs(sha))
                 fix = await agents.follow_up(
@@ -325,7 +344,7 @@ class Pipeline:
                 )
                 session, summary = fix.session_id, fix.text
                 session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage)
-                set_stage(f"ci review {attempt + 1}")
+                set_stage(f"ci review {ci_fixes}")
                 self._move(ticket.id, lists.reviewing)
                 flags = find_risk_flags(ws.diff_vs_base(limit=10**9))
                 review = await agents.review(ticket, ws.diff_vs_base(), ws.path, risk_flags=flags)
@@ -338,7 +357,7 @@ class Pipeline:
 
             reason = {
                 "failure": f"CI failed ({', '.join(failed)})"
-                + (f" after {attempt} CI fix attempt(s)" if cfg.max_ci_fix_attempts > 0 else ""),
+                + (f" after {ci_fixes} CI fix attempt(s)" if cfg.max_ci_fix_attempts > 0 else ""),
                 "timeout": f"CI didn't finish within {cfg.ci_timeout_s // 60} minutes",
                 "none": "the repository has no CI checks, and MERGE_WITHOUT_CI is off",
             }[ci]
@@ -346,4 +365,71 @@ class Pipeline:
             self._move(ticket.id, lists.failed or lists.needs_info)
             self.store.finish(run_id, status="pr_open", cost_usd=cost, summary=summary, pr_url=pr.url, error=reason)
             return Outcome("pr_open", summary=summary, pr_url=pr.url, error=reason)
-        raise AssertionError("unreachable")  # the last attempt always returns above
+
+    async def _rebase(
+        self,
+        ticket: Ticket,
+        ws: Workspace,
+        agents: AgentsProtocol,
+        session: str,
+        set_stage: Callable[[str], None],
+        summary: str,
+        review_summary: str,
+        risk_flags: list[str],
+        rebases: int,
+    ) -> tuple[str, str, str, list[str], int]:
+        """Rebase onto the moved base branch and re-check. Returns the updated state (and rebase count)."""
+        if rebases >= MAX_REBASES:
+            raise StageFailed("rebase", f"The base branch kept moving; gave up after {MAX_REBASES} rebases.")
+        rebases += 1
+        set_stage("rebase")
+        ws.kill_agent_processes()
+        try:
+            conflicts = ws.rebase_onto_base()
+        except WorkspaceError as e:
+            ws.abort_rebase()
+            raise StageFailed("rebase", f"The rebase failed: {e}") from e
+        if conflicts:
+            fix = await agents.follow_up(
+                session,
+                prompts.RESOLVE_CONFLICTS.format(
+                    files="\n".join(f"- {f}" for f in conflicts), check_command=self.cfg.check_command
+                ),
+                ws.path,
+            )
+            session = fix.session_id
+            ws.kill_agent_processes()
+            left = ws.conflict_markers(conflicts)
+            if left:
+                ws.abort_rebase()
+                raise StageFailed(
+                    "rebase",
+                    "Conflict markers remain after the coder's resolution.",
+                    "\n".join(f"- {f}" for f in left),
+                )
+            try:
+                again = ws.continue_rebase()
+            except WorkspaceError as e:
+                ws.abort_rebase()
+                raise StageFailed("rebase", f"Could not continue the rebase: {e}") from e
+            if again:
+                ws.abort_rebase()
+                raise StageFailed(
+                    "rebase",
+                    "The rebase hit conflicts again on a later commit.",
+                    "\n".join(f"- {f}" for f in again),
+                )
+        session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage)
+        if conflicts:
+            set_stage("rebase review")
+            self._move(ticket.id, self.cfg.lists.reviewing)
+            flags = find_risk_flags(ws.diff_vs_base(limit=10**9))
+            review = await agents.review(ticket, ws.diff_vs_base(), ws.path, risk_flags=flags)
+            if not review.approved:
+                issues = "\n".join(f"- {i}" for i in review.issues) or review.summary
+                raise StageFailed("review", "The reviewer rejected the conflict resolution.", issues)
+            review_summary, risk_flags = review.summary, flags
+        else:
+            risk_flags = find_risk_flags(ws.diff_vs_base(limit=10**9))
+        set_stage("deliver")
+        return session, summary, review_summary, risk_flags, rebases
