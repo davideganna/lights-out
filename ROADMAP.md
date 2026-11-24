@@ -43,7 +43,7 @@ The phases are in priority order. Each item is a candidate ticket.
 - [ ] Health: heartbeat plus alerts (Slack or email) when a card fails or the service stops
 - [x] Interactive dashboard: outcomes, merge rate, spend, time and cost per stage, per-repository metrics,
       run timelines
-- [ ] Link full agent transcripts from the dashboard
+- [x] Link full agent transcripts from the dashboard
 
 ## Phase 4: Measure it (evaluation suite)
 

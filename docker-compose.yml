@@ -5,7 +5,7 @@ services:
     volumes:
       - agent-data:/data
     ports:
-      - "8080:8080"   # morning report: http://localhost:8080/
+      - "127.0.0.1:8080:8080"   # morning report: http://localhost:8080/
     restart: unless-stopped
     stop_grace_period: 30s  # time for the shutdown cleanup (Trello calls) before SIGKILL
 

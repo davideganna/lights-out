@@ -24,6 +24,10 @@ merged card, time and cost per stage, where unmerged runs stopped, cost vs. dura
 numbers, and every run with its stage timeline. Filter by time range, repository, outcome or text; every
 chart has a table view. It refreshes every 15 seconds and needs no internet access.
 
+> **Security:** the dashboard links the agents' full transcripts (code and prompts) and has no login.
+> `docker-compose.yml` publishes it on `127.0.0.1` only. Don't expose it publicly; to view it remotely use an
+> SSH tunnel (`ssh -L 8080:localhost:8080 host`) or similar.
+
 Cards move through **Triaged → In Progress → Verifying → Reviewing → PR Opened → Done**;
 errors (checks or review that never pass, CI failures) go to **Failed** with a comment.
 
