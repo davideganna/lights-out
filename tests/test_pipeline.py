@@ -56,8 +56,11 @@ class FakePR:
 
 
 class FakeGitHub:
-    def __init__(self, ci="success"):
+    def __init__(self, ci="success", ci_results=None):
         self.ci = ci
+        self.ci_results = list(ci_results or [])  # consumed one per wait_for_ci call, then self.ci
+        self.waits = 0
+        self.log_calls: list[str] = []
         self.merged = False
         self.prs: list[dict] = []
         self.pr_comments: list[tuple[int, str]] = []
@@ -67,7 +70,13 @@ class FakeGitHub:
         return FakePR(head_sha=kw["head_sha"])
 
     def wait_for_ci(self, sha, timeout_s, grace_s):
-        return self.ci, (["check"] if self.ci == "failure" else [])
+        self.waits += 1
+        ci = self.ci_results.pop(0) if self.ci_results else self.ci
+        return ci, (["check"] if ci == "failure" else [])
+
+    def ci_failure_logs(self, sha):
+        self.log_calls.append(sha)
+        return [("check", "boom: missing dep")]
 
     def comment_pr(self, number, body):
         self.pr_comments.append((number, body))
@@ -90,6 +99,7 @@ class FakeAgents:
     spent_usd: float = 0.0
     calls: list[str] = field(default_factory=list)
     seen_flags: list[list[str]] = field(default_factory=list)
+    fix_messages: list[str] = field(default_factory=list)
 
     async def triage(self, ticket, cwd):
         self.calls.append("triage")
@@ -107,7 +117,10 @@ class FakeAgents:
 
     async def follow_up(self, session_id, message, cwd):
         self.calls.append("fix")
+        self.fix_messages.append(message)
         (Path(cwd) / "feature.txt").write_text("ok")
+        with (Path(cwd) / "extra.txt").open("a") as f:
+            f.write(f"fix {len(self.fix_messages)}\n")
         self.spent_usd += 0.5
         return AgentResult("Fixed", session_id, 0.5)
 
@@ -265,6 +278,7 @@ async def test_no_changes_fails(cfg, origin):
 
 
 async def test_ci_failure_leaves_pr_open_and_does_not_merge(cfg, origin):
+    cfg.max_ci_fix_attempts = 0
     gh = FakeGitHub("failure")
     pipe, trello, store = make(cfg, origin, FakeAgents(), gh)
     out = await pipe.process(TICKET, "n", budget_usd=10)
@@ -529,6 +543,7 @@ async def test_large_change_is_held_unless_limit_disabled(cfg, origin):
 
 
 async def test_risky_change_with_failing_ci_still_fails(cfg, origin):
+    cfg.max_ci_fix_attempts = 0
     gh = FakeGitHub("failure")
     pipe, trello, _ = make(cfg, origin, MakefileAgents(), gh)
     out = await pipe.process(TICKET, "n", budget_usd=10)
@@ -536,3 +551,62 @@ async def test_risky_change_with_failing_ci_still_fails(cfg, origin):
     assert out.error.startswith("CI failed")
     assert trello.moves[-1] == "Failed"
     assert gh.pr_comments == []
+
+
+# --- CI fix loop -----------------------------------------------------------------
+def stage_names(store, day):
+    run_id = store.day_runs(day)[0].id
+    return [e["stage"] for e in store.all_events() if e["run_id"] == run_id]
+
+
+async def test_ci_failure_is_fed_back_and_then_merges(cfg, origin):
+    agents, gh = FakeAgents(reviews=[True, True]), FakeGitHub(ci_results=["failure", "success"])
+    pipe, trello, store = make(cfg, origin, agents, gh)
+    out = await pipe.process(TICKET, "d", budget_usd=10)
+    assert out.status == "merged", out.error
+    assert agents.calls == ["triage", "implement", "review", "fix", "review"]
+    assert "boom: missing dep" in agents.fix_messages[0] and "### check" in agents.fix_messages[0]
+    stages = stage_names(store, "d")
+    tail = ["deliver", "ci", "ci fix 1", "checks", "ci review 1", "deliver", "ci", "end"]
+    assert stages[-len(tail) :] == tail
+    assert len(gh.prs) == 2 and gh.merged
+    first_pr = trello.moves.index("PR Opened")
+    assert "In Progress" in trello.moves[first_pr:]
+    assert branch_file(origin, TICKET.branch, "extra.txt") == "fix 1\n"
+
+
+async def test_ci_failing_every_time_stops_after_the_attempts(cfg, origin):
+    agents, gh = FakeAgents(reviews=[True] * 3), FakeGitHub("failure")
+    pipe, trello, _ = make(cfg, origin, agents, gh)
+    out = await pipe.process(TICKET, "d", budget_usd=10)
+    assert out.status == "pr_open" and not gh.merged
+    assert len(gh.log_calls) == 2 and gh.waits == 3
+    assert "2 CI fix attempt(s)" in out.error and out.error.startswith("CI failed")
+    assert "2 CI fix attempt(s)" in trello.comments[-1]
+    assert trello.moves[-1] == "Failed"
+
+
+async def test_zero_ci_fix_attempts_keeps_old_behaviour(cfg, origin):
+    cfg.max_ci_fix_attempts = 0
+    agents, gh = FakeAgents(), FakeGitHub("failure")
+    pipe, _, _ = make(cfg, origin, agents, gh)
+    out = await pipe.process(TICKET, "d", budget_usd=10)
+    assert out.status == "pr_open" and out.error == "CI failed (check)"
+    assert "fix" not in agents.calls and gh.log_calls == [] and gh.waits == 1
+
+
+async def test_rejected_ci_fix_fails_the_card(cfg, origin):
+    agents, gh = FakeAgents(reviews=[True, False]), FakeGitHub(ci_results=["failure"])
+    pipe, trello, _ = make(cfg, origin, agents, gh)
+    out = await pipe.process(TICKET, "d", budget_usd=10)
+    assert out.status == "failed" and "needs more tests" in out.error
+    assert not gh.merged and trello.moves[-1] == "Failed"
+
+
+@pytest.mark.parametrize("ci", ["timeout", "none"])
+async def test_timeout_and_no_ci_are_not_retried(cfg, origin, ci):
+    agents, gh = FakeAgents(), FakeGitHub(ci)
+    pipe, _, _ = make(cfg, origin, agents, gh)
+    out = await pipe.process(TICKET, "d", budget_usd=10)
+    assert out.status == "pr_open"
+    assert gh.log_calls == [] and gh.waits == 1 and "fix" not in agents.calls

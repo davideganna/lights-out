@@ -15,7 +15,8 @@ time, top first. For each card:
 4. **Review** (Opus, read-only, separate context): approves, or sends issues back to the coder
    (up to `MAX_REVIEW_ROUNDS` times).
 5. **Deliver**: pushes the branch, opens a PR, waits for GitHub Actions, **squash-merges when CI
-   is green**, comments the PR link on the card and moves it to **Done**.
+   is green**, comments the PR link on the card and moves it to **Done**. If CI fails, the logs go back
+   to the coder, which fixes and pushes again, up to `MAX_CI_FIX_ATTEMPTS` times (default 2, `0` disables).
 
 Whatever happens, the card gets a comment. A live **dashboard** at <http://localhost:8080/> shows what
 the agent is doing and how well it's doing it: runs per day by outcome, merge rate, spend and cost per
@@ -99,8 +100,9 @@ in `REPO_LABELS` and `DEFAULT_REPO`:
    - Optional: `HUMAN_REVIEW_PATHS` and `MAX_AUTO_MERGE_LINES` decide which changes need a human to merge;
      see the Safety model.
    - GitHub: a fine-grained token limited to those repositories with *Contents*, *Pull requests* and
-     *Workflows* set to read/write and *Checks* set to read. Optionally add *Administration* set to read so
-     `doctor` can verify branch protection (without it, `doctor` only warns).
+     *Workflows* set to read/write and *Checks* set to read. Optionally add *Actions* set to read so CI
+     failure logs can be sent to the coder (without it only check summaries are available), and
+     *Administration* set to read so `doctor` can verify branch protection (without it, `doctor` only warns).
    - `TRELLO_BOARD_ID`: the board whose *Queued* column drives the work.
 2. Build and check: `docker compose build && docker compose run --rm lights-out doctor`
    (`doctor` also checks the Claude credentials with a tiny real request, well under one cent)

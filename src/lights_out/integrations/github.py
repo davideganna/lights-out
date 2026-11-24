@@ -12,6 +12,13 @@ import httpx
 CIResult = Literal["success", "failure", "none", "timeout"]
 
 
+LOG_CHARS = 8000
+
+
+def _failed_runs(runs: list[dict]) -> list[dict]:
+    return [r for r in runs if r["status"] == "completed" and r["conclusion"] not in ("success", "neutral", "skipped")]
+
+
 class GitHubError(RuntimeError):
     pass
 
@@ -97,8 +104,31 @@ class GitHubClient:
             return "none", []
         if any(r["status"] != "completed" for r in runs):
             return "pending", []
-        failed = [r["name"] for r in runs if r["conclusion"] not in ("success", "neutral", "skipped")]
+        failed = [r["name"] for r in _failed_runs(runs)]
         return ("failure" if failed else "success"), failed
+
+    def ci_failure_logs(self, sha: str) -> list[tuple[str, str]]:
+        """Failure output of a commit's failed check runs as (check name, text) pairs."""
+        data = self._req("GET", f"/repos/{self.repo}/commits/{sha}/check-runs", params={"per_page": 100})
+        out: list[tuple[str, str]] = []
+        for run in _failed_runs(data.get("check_runs", [])):
+            if (run.get("app") or {}).get("slug") == "github-actions":
+                try:
+                    # The log endpoint redirects to another host; httpx drops Authorization there.
+                    r = self._http.request(
+                        "GET", f"/repos/{self.repo}/actions/jobs/{run['id']}/logs", follow_redirects=True
+                    )
+                    if r.status_code == 200:
+                        out.append((run["name"], r.text[-LOG_CHARS:]))
+                        continue
+                except httpx.HTTPError:
+                    pass
+            output = run.get("output") or {}
+            parts = [output.get(k) for k in ("title", "summary", "text")]
+            text = "\n\n".join(p for p in parts if p)
+            note = "(The full log couldn't be read; this is the check run summary.)"
+            out.append((run["name"], f"{text}\n\n{note}" if text else note))
+        return out
 
     def wait_for_ci(self, sha: str, *, timeout_s: int, grace_s: int, poll_s: int = 20) -> tuple[CIResult, list[str]]:
         """Wait until all check runs finish.

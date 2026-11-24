@@ -125,6 +125,7 @@ class Config:
     max_ticket_usd: float = 10.0
     max_day_usd: float = 50.0
     max_fix_attempts: int = 3
+    max_ci_fix_attempts: int = 2
     max_review_rounds: int = 2
     coder_max_turns: int = 150
     check_command: str = "make check"
@@ -183,6 +184,7 @@ class Config:
             max_ticket_usd=float(_get("MAX_TICKET_USD", "10")),
             max_day_usd=float(_get("MAX_DAY_USD", "50")),
             max_fix_attempts=int(_get("MAX_FIX_ATTEMPTS", "3")),
+            max_ci_fix_attempts=int(_get("MAX_CI_FIX_ATTEMPTS", "2")),
             max_review_rounds=int(_get("MAX_REVIEW_ROUNDS", "2")),
             coder_max_turns=int(_get("CODER_MAX_TURNS", "150")),
             check_command=_get("CHECK_COMMAND", "make check"),
