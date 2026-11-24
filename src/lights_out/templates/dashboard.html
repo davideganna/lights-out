@@ -664,6 +664,12 @@ function detailRow(r) {
     }
     right.append(tl);
   } else right.append(h("p", { class: "hint", text: "No stage timeline (recorded before timelines existed)." }));
+  right.append(h("h3", { text: "Transcripts" }));
+  const files = (r.transcripts || []).map((n) => [n, /^(\d{2})-([a-z0-9 _-]+)\.md$/.exec(n)]).filter(([, m]) => m);
+  if (files.length) {
+    right.append(h("div", { class: "links" }, ...files.map(([n, m]) =>
+      h("a", { href: "runs/" + r.id + "/" + encodeURIComponent(n), target: "_blank", rel: "noopener", text: Number(m[1]) + " · " + m[2] }))));
+  } else right.append(h("p", { class: "hint", text: "No transcripts" }));
   right.append(h("p", { class: "hint", text: "Started " + fmtTime(r.start) + (r.end ? " · finished " + fmtTime(r.end) : " · still running") }));
   return h("tr", { class: "detail" }, h("td", { colspan: String(COLUMNS.length + 1) }, h("div", { class: "detail detail-grid" }, left, right)));
 }

@@ -192,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
 
     trello, store, scheduler = build(cfg)
     if args.command == "report":
-        print(write_reports(store, cfg.reports_dir, datetime.now().date().isoformat()))
+        print(write_reports(store, cfg.reports_dir, datetime.now().date().isoformat(), runs_dir=cfg.runs_dir))
         return 0
     if args.command == "run-once":
         asyncio.run(run_until_signal(scheduler.run_now(), stop=scheduler.stop))

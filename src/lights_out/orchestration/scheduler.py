@@ -11,15 +11,17 @@ import asyncio
 import functools
 import http.server
 import logging
+import re
 import signal
 import threading
 from collections.abc import Coroutine
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from ..core.config import Config
 from ..integrations.trello import TrelloClient
-from ..reporting.report import write_reports
+from ..reporting.report import TRANSCRIPT_RE, write_reports
 from ..reporting.store import Store
 from .pipeline import Pipeline
 
@@ -60,7 +62,7 @@ class Scheduler:
                 self.trello.move(run.card_id, self.cfg.lists.ready)
             except Exception:  # noqa: BLE001
                 log.exception("Could not move card %s back", run.card_id)
-            write_reports(self.store, self.cfg.reports_dir, run.day)
+            write_reports(self.store, self.cfg.reports_dir, run.day, runs_dir=self.cfg.runs_dir)
 
     def next_card(self, day: str):
         for card in self.trello.cards_in(self.cfg.lists.ready):
@@ -92,7 +94,7 @@ class Scheduler:
         log.info("Picked up card #%s: %s", card.short_id, card.title)
         outcome = await self.pipeline.process(card, day, budget_usd=min(self.cfg.max_ticket_usd, left))
         log.info("Card #%s → %s", card.short_id, outcome.status)
-        write_reports(self.store, self.cfg.reports_dir, day)
+        write_reports(self.store, self.cfg.reports_dir, day, runs_dir=self.cfg.runs_dir)
         return True
 
     async def run_now(self) -> None:
@@ -100,11 +102,11 @@ class Scheduler:
         self.recover()
         while not self.stop.is_set() and await self.work_once():
             pass
-        write_reports(self.store, self.cfg.reports_dir, today())
+        write_reports(self.store, self.cfg.reports_dir, today(), runs_dir=self.cfg.runs_dir)
 
     async def run_forever(self) -> None:
         self.recover()
-        write_reports(self.store, self.cfg.reports_dir, today())
+        write_reports(self.store, self.cfg.reports_dir, today(), runs_dir=self.cfg.runs_dir)
         log.info("Watching '%s' every %ds", self.cfg.lists.ready, self.cfg.poll_seconds)
         while not self.stop.is_set():
             try:
@@ -150,14 +152,62 @@ async def run_until_signal(
     return stop.is_set()
 
 
-class _QuietHandler(http.server.SimpleHTTPRequestHandler):
+_TRANSCRIPT_PATH = re.compile(r"^/runs/([0-9]+)/([^/]+)$")
+
+
+def resolve_transcript(runs_dir: Path, raw_path: str) -> Path | None:
+    """Map a raw (still percent-encoded) request path to a transcript file, or None (-> 404)."""
+    path = raw_path.split("#", 1)[0].split("?", 1)[0]
+    m = _TRANSCRIPT_PATH.fullmatch(path)
+    if not m or not TRANSCRIPT_RE.fullmatch(m.group(2)):
+        return None
+    root = runs_dir.resolve()
+    target = (runs_dir / m.group(1) / m.group(2)).resolve()
+    if not target.is_relative_to(root) or not target.is_file():
+        return None
+    return target
+
+
+class _DashboardHandler(http.server.SimpleHTTPRequestHandler):
+    """Serves the dashboard from `directory` and agent transcripts from `runs_dir` under /runs/."""
+
+    def __init__(self, *args, runs_dir: Path, **kwargs) -> None:
+        self.runs_dir = runs_dir
+        super().__init__(*args, **kwargs)
+
     def log_message(self, *args) -> None:
         pass
 
+    def send_head(self):
+        path = self.path
+        if not (path == "/runs" or path.startswith("/runs/")):
+            return super().send_head()
+        target = resolve_transcript(self.runs_dir, path)
+        if target is None:
+            self.send_error(404)
+            return None
+        try:
+            f = target.open("rb")
+        except OSError:
+            self.send_error(404)
+            return None
+        size = target.stat().st_size
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(size))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        return f
+
+
+def build_server(cfg: Config, host: str = "0.0.0.0") -> http.server.ThreadingHTTPServer:
+    # 0.0.0.0 is for the container; the compose port mapping restricts it to localhost on the host.
+    handler = functools.partial(_DashboardHandler, directory=str(cfg.reports_dir), runs_dir=cfg.runs_dir)
+    return http.server.ThreadingHTTPServer((host, cfg.report_port), handler)
+
 
 def serve_reports(cfg: Config) -> threading.Thread:
-    handler = functools.partial(_QuietHandler, directory=str(cfg.reports_dir))
-    server = http.server.ThreadingHTTPServer(("0.0.0.0", cfg.report_port), handler)
+    server = build_server(cfg)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     log.info("Reports at http://localhost:%d/", cfg.report_port)

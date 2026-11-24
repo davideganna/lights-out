@@ -202,7 +202,7 @@ class Pipeline:
     def _refresh_dashboard(self) -> None:
         """Rewrite the dashboard data so the page follows a card live. Never fails a card."""
         try:
-            write_reports(self.store, self.cfg.reports_dir)
+            write_reports(self.store, self.cfg.reports_dir, runs_dir=self.cfg.runs_dir)
         except Exception:  # noqa: BLE001
             log.exception("Could not refresh the dashboard data")
 

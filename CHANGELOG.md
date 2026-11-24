@@ -7,6 +7,9 @@ All notable changes to lights-out are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- The dashboard's run detail links each run's agent transcripts (opened in a new tab). The server serves them at
+  `/runs/<run_id>/<file>` (strict name check, 404 otherwise) and `data.json` has a `transcripts` list per run.
+
 - Before merging, the base branch is checked for new commits. If it moved, the branch is rebased onto it; the
   coder resolves simple conflicts (no conflict markers may remain, otherwise the card fails and the rebase is
   aborted), then `make check`, one review (only when conflicts were resolved), the merge policy and CI run
@@ -22,6 +25,9 @@ All notable changes to lights-out are documented here. The format follows
   or exceeds `MAX_AUTO_MERGE_LINES` changed lines (default 400; `0` disables) is no longer merged
   automatically. The PR body gets a "Needs human approval" section, the PR and card get a comment with the
   reasons, and the run ends as `pr_open`. An empty `HUMAN_REVIEW_PATHS` disables path holds.
+
+### Security
+- `docker-compose.yml` publishes the dashboard port on `127.0.0.1` only; the README warns that it has no login.
 
 ### Fixed
 - Dashboard: Interrupted (violet) and Declined (gray) no longer share a colour; Running moved to teal so it
