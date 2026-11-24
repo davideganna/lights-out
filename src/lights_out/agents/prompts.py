@@ -97,6 +97,22 @@ machine) and keep `{check_command}` passing. Do not skip, delete, weaken or mark
 expected failures, and do not change the CI configuration to make it pass. Then reply with an \
 updated summary."""
 
+RESOLVE_CONFLICTS = """\
+The base branch moved while you were working, and your branch is being rebased onto it. \
+The rebase stopped with conflicts in these files:
+
+{files}
+
+Edit those files to resolve the conflicts. Each conflict is marked like this:
+<<<<<<< (ours: the updated base branch)
+...
+=======
+...
+>>>>>>> (theirs: your change)
+Keep the intent of both sides and remove every marker line (`<<<<<<<`, `=======`, `>>>>>>>`). \
+Do not run git (no add, commit, rebase or checkout); the orchestrator continues the rebase. \
+Keep `{check_command}` passing, then reply with a short summary of how you resolved them."""
+
 REVIEW_SYSTEM = """\
 You are a senior engineer reviewing a pull request written by an autonomous \
 agent. If you approve, it is merged automatically, so you are the last human-like \

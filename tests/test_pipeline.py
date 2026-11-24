@@ -13,11 +13,12 @@ import pytest
 from lights_out.agents.agents import AgentResult, BudgetExceeded, ReviewResult, TriageResult
 from lights_out.core.config import Config
 from lights_out.core.models import Comment, Ticket
+from lights_out.integrations.github import GitHubError
 from lights_out.integrations.trello import queuing_member
 from lights_out.orchestration.pipeline import Pipeline
 from lights_out.orchestration.policy import merge_policy
 from lights_out.orchestration.scheduler import run_until_signal
-from lights_out.orchestration.workspace import Workspace
+from lights_out.orchestration.workspace import Workspace, WorkspaceError
 from lights_out.reporting.store import Store
 
 
@@ -56,8 +57,10 @@ class FakePR:
 
 
 class FakeGitHub:
-    def __init__(self, ci="success", ci_results=None):
+    def __init__(self, ci="success", ci_results=None, on_wait=None, merge_errors=None):
         self.ci = ci
+        self.on_wait = on_wait  # called with the wait number (1-based) on every wait_for_ci
+        self.merge_errors = list(merge_errors or [])  # statuses merge() raises first
         self.ci_results = list(ci_results or [])  # consumed one per wait_for_ci call, then self.ci
         self.waits = 0
         self.log_calls: list[str] = []
@@ -71,6 +74,8 @@ class FakeGitHub:
 
     def wait_for_ci(self, sha, timeout_s, grace_s):
         self.waits += 1
+        if self.on_wait:
+            self.on_wait(self.waits)
         ci = self.ci_results.pop(0) if self.ci_results else self.ci
         return ci, (["check"] if ci == "failure" else [])
 
@@ -82,6 +87,9 @@ class FakeGitHub:
         self.pr_comments.append((number, body))
 
     def merge(self, number, title):
+        if self.merge_errors:
+            status = self.merge_errors.pop(0)
+            raise GitHubError(f"GitHub PUT merge -> {status}: Base branch was modified", status=status)
         self.merged = True
         return "abc"
 
@@ -610,3 +618,164 @@ async def test_timeout_and_no_ci_are_not_retried(cfg, origin, ci):
     out = await pipe.process(TICKET, "d", budget_usd=10)
     assert out.status == "pr_open"
     assert gh.log_calls == [] and gh.waits == 1 and "fix" not in agents.calls
+
+
+# --- rebase onto a moved base ----------------------------------------------------
+def push_to_base(origin: Path, tmp_path: Path, path: str, content: str) -> None:
+    """Simulate someone else pushing a commit to main."""
+    n = len(list(tmp_path.glob("scratch*")))
+    scratch = tmp_path / f"scratch{n}"
+    _git(tmp_path, "clone", str(origin), str(scratch))
+    (scratch / path).write_text(content)
+    _git(scratch, "add", ".")
+    _git(scratch, "-c", "user.name=o", "-c", "user.email=o@o", "commit", "-m", f"other {path}")
+    _git(scratch, "push", "origin", "HEAD:main")
+
+
+def once(fn, n=1):
+    return lambda wait_no: fn() if wait_no == n else None
+
+
+def rebase_in_progress(cfg) -> bool:
+    git_dir = cfg.workspaces_dir / TICKET.id / ".git"
+    return (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists()
+
+
+async def test_base_not_moved_means_no_rebase(cfg, origin):
+    gh = FakeGitHub()
+    pipe, _, store = make(cfg, origin, FakeAgents(), gh)
+    assert (await pipe.process(TICKET, "d", budget_usd=10)).status == "merged"
+    assert "rebase" not in stage_names(store, "d") and gh.waits == 1
+
+
+async def test_base_moved_without_conflict_rebases_and_rechecks(cfg, origin, tmp_path):
+    gh = FakeGitHub(on_wait=once(lambda: push_to_base(origin, tmp_path, "other.txt", "x\n")))
+    agents = FakeAgents()
+    pipe, _, store = make(cfg, origin, agents, gh)
+    out = await pipe.process(TICKET, "d", budget_usd=10)
+    assert out.status == "merged", out.error
+    stages = stage_names(store, "d")
+    i = stages.index("rebase")
+    assert stages[i : i + 2] == ["rebase", "checks"]
+    assert gh.waits == 2 and len(gh.prs) == 2
+    assert agents.calls == ["triage", "implement", "review"]
+    assert branch_file(origin, TICKET.branch, "other.txt") == "x\n"
+    assert branch_file(origin, TICKET.branch, "feature.txt") == "ok"
+
+
+async def test_conflict_is_resolved_by_the_coder(cfg, origin, tmp_path):
+    gh = FakeGitHub(on_wait=once(lambda: push_to_base(origin, tmp_path, "feature.txt", "base")))
+    agents = FakeAgents(reviews=[True, True])
+    pipe, _, store = make(cfg, origin, agents, gh)
+    out = await pipe.process(TICKET, "d", budget_usd=10)
+    assert out.status == "merged", out.error
+    assert "feature.txt" in agents.fix_messages[0] and "<<<<<<<" in agents.fix_messages[0]
+    assert agents.calls == ["triage", "implement", "review", "fix", "review"]
+    assert "rebase review" in stage_names(store, "d")
+    assert branch_file(origin, TICKET.branch, "feature.txt") == "ok"
+
+
+class NoResolveAgents(FakeAgents):
+    async def follow_up(self, session_id, message, cwd):
+        self.fix_messages.append(message)
+        return AgentResult("did nothing", session_id, 0.0)
+
+
+async def test_conflict_markers_left_fail_the_card_and_abort_the_rebase(cfg, origin, tmp_path):
+    gh = FakeGitHub(on_wait=once(lambda: push_to_base(origin, tmp_path, "feature.txt", "base")))
+    pipe, trello, _ = make(cfg, origin, NoResolveAgents(), gh)
+    out = await pipe.process(TICKET, "d", budget_usd=10)
+    assert out.status == "failed" and "feature.txt" in out.error
+    assert not gh.merged and trello.moves[-1] == "Failed"
+    assert not rebase_in_progress(cfg)
+
+
+async def test_base_that_keeps_moving_fails(cfg, origin, tmp_path):
+    gh = FakeGitHub(on_wait=lambda n: push_to_base(origin, tmp_path, f"other{n}.txt", "x\n"))
+    pipe, _, _ = make(cfg, origin, FakeAgents(), gh)
+    out = await pipe.process(TICKET, "d", budget_usd=10)
+    assert out.status == "failed" and "kept moving" in out.error
+    assert gh.waits == 3 and not gh.merged
+
+
+async def test_merge_405_rebases_once_and_retries(cfg, origin):
+    gh = FakeGitHub(merge_errors=[405])
+    pipe, _, store = make(cfg, origin, FakeAgents(), gh)
+    out = await pipe.process(TICKET, "d", budget_usd=10)
+    assert out.status == "merged", out.error
+    assert stage_names(store, "d").count("rebase") == 1 and gh.waits == 2
+
+
+async def test_second_merge_405_fails(cfg, origin):
+    gh = FakeGitHub(merge_errors=[405, 405])
+    pipe, _, _ = make(cfg, origin, FakeAgents(), gh)
+    out = await pipe.process(TICKET, "d", budget_usd=10)
+    assert out.status == "failed" and "405" in out.error and not gh.merged
+
+
+def _ws(cfg, origin):
+    ws = Workspace(cfg.workspaces_dir / "w", repo_url=str(origin), base_branch="main", github_token="")
+    ws.prepare(TICKET)
+    (ws.path / "feature.txt").write_text("ok")
+    ws.commit("feature")
+    return ws
+
+
+def test_workspace_base_moved(cfg, origin, tmp_path):
+    ws = _ws(cfg, origin)
+    assert ws.base_moved() is False
+    push_to_base(origin, tmp_path, "other.txt", "x")
+    assert ws.base_moved() is True
+
+
+def test_workspace_rebase_without_conflict(cfg, origin, tmp_path):
+    ws = _ws(cfg, origin)
+    push_to_base(origin, tmp_path, "other.txt", "x")
+    ws.base_moved()
+    assert ws.rebase_onto_base() == []
+    assert ws.base_moved() is False and (ws.path / "other.txt").exists()
+
+
+def test_workspace_rebase_conflict_continue_and_abort(cfg, origin, tmp_path):
+    ws = _ws(cfg, origin)
+    before = ws.git("rev-parse", "HEAD")
+    push_to_base(origin, tmp_path, "feature.txt", "base")
+    ws.base_moved()
+    assert ws.rebase_onto_base() == ["feature.txt"]
+    assert ws.conflict_markers(["feature.txt"]) == ["feature.txt"]
+    ws.abort_rebase()
+    assert ws.git("rev-parse", "HEAD") == before
+
+    assert ws.rebase_onto_base() == ["feature.txt"]
+    (ws.path / "feature.txt").write_text("ok\n=======\n")  # a bare ======= is not a marker
+    assert ws.conflict_markers(["feature.txt"]) == []
+    assert ws.continue_rebase() == []
+    assert ws.base_moved() is False
+
+
+class EditsOtherFileAgents(FakeAgents):
+    async def follow_up(self, session_id, message, cwd):
+        (Path(cwd) / "README.md").write_text("hi, edited while resolving\n")
+        return await super().follow_up(session_id, message, cwd)
+
+
+async def test_coder_edits_to_other_tracked_files_survive_the_rebase(cfg, origin, tmp_path):
+    gh = FakeGitHub(on_wait=once(lambda: push_to_base(origin, tmp_path, "feature.txt", "base")))
+    agents = EditsOtherFileAgents(reviews=[True, True])
+    pipe, _, _ = make(cfg, origin, agents, gh)
+    out = await pipe.process(TICKET, "d", budget_usd=10)
+    assert out.status == "merged", out.error
+    assert branch_file(origin, TICKET.branch, "README.md") == "hi, edited while resolving\n"
+    assert branch_file(origin, TICKET.branch, "feature.txt") == "ok"
+
+
+async def test_rebase_git_failure_aborts_and_fails_the_stage(cfg, origin, tmp_path, monkeypatch):
+    def boom(self):
+        raise WorkspaceError("git rebase --continue failed: boom")
+
+    monkeypatch.setattr(Workspace, "continue_rebase", boom)
+    gh = FakeGitHub(on_wait=once(lambda: push_to_base(origin, tmp_path, "feature.txt", "base")))
+    pipe, trello, _ = make(cfg, origin, FakeAgents(), gh)
+    out = await pipe.process(TICKET, "d", budget_usd=10)
+    assert out.status == "failed" and "boom" in out.error and "stage: rebase" in trello.comments[-1]
+    assert not rebase_in_progress(cfg) and not gh.merged

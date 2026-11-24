@@ -95,6 +95,12 @@ class Workspace:
             raise WorkspaceError(f"git {' '.join(args)} failed: {r.stderr.strip()[:500]}")
         return r.stdout
 
+    def git_code(self, *args: str, env: dict[str, str] | None = None) -> tuple[int, str]:
+        """Run git without raising; returns (exit code, stdout)."""
+        cmd = ["git", "-c", "safe.directory=*", *args]
+        r = subprocess.run(cmd, cwd=self.path, env={**self._git_env(), **(env or {})}, capture_output=True, text=True)
+        return r.returncode, r.stdout
+
     def _hand_to_agent(self) -> None:
         if self.agent_user:
             subprocess.run(["chown", "-R", f"{self.agent_user}:{self.agent_user}", str(self.path)], check=True)
@@ -193,6 +199,57 @@ class Workspace:
             raise WorkspaceError(f"Refusing to push to {branch!r}")
         self.git("push", "--force", "origin", f"HEAD:refs/heads/{branch}")
         return self.git("rev-parse", "HEAD").strip()
+
+    # --- rebasing onto a moved base branch ------------------------------------
+    def base_moved(self) -> bool:
+        """Fetch the base branch; True when origin/<base> is not yet part of HEAD."""
+        self.git("fetch", "origin", self.base_branch)
+        code, _ = self.git_code("merge-base", "--is-ancestor", f"origin/{self.base_branch}", "HEAD")
+        return code != 0
+
+    def _unmerged(self) -> list[str]:
+        out = self.git("diff", "--name-only", "--diff-filter=U", check=False)
+        return [f for f in out.splitlines() if f]
+
+    def _rebase_cmd(self, *args: str) -> tuple[int, str]:
+        name, email = self.author
+        return self.git_code("-c", f"user.name={name}", "-c", f"user.email={email}", *args, env={"GIT_EDITOR": "true"})
+
+    def _rebase_result(self, code: int, what: str) -> list[str]:
+        self._hand_to_agent()
+        if code == 0:
+            return []
+        files = self._unmerged()
+        if not files:
+            raise WorkspaceError(f"git {what} failed without conflicts")
+        return files
+
+    def rebase_onto_base(self) -> list[str]:
+        """Rebase on origin/<base>. [] on success, else the conflicted files (rebase left in progress)."""
+        code, _ = self._rebase_cmd("rebase", f"origin/{self.base_branch}")
+        return self._rebase_result(code, "rebase")
+
+    def conflict_markers(self, files: list[str]) -> list[str]:
+        """Files that still contain conflict marker lines (a bare ======= is not counted)."""
+        bad = []
+        for f in files:
+            path = self.path / f
+            if not path.is_file():
+                continue
+            text = path.read_text(errors="replace")
+            if any(line.startswith(("<<<<<<< ", ">>>>>>> ", "|||||||")) for line in text.splitlines()):
+                bad.append(f)
+        return bad
+
+    def continue_rebase(self) -> list[str]:
+        """Stage the whole working tree and continue. [] when finished, else the newly conflicted files."""
+        self.stage_all()  # the coder may also have edited files that were not in conflict
+        code, _ = self._rebase_cmd("rebase", "--continue")
+        return self._rebase_result(code, "rebase --continue")
+
+    def abort_rebase(self) -> None:
+        self.git("rebase", "--abort", check=False)
+        self._hand_to_agent()
 
     def cleanup(self) -> None:
         shutil.rmtree(self.path, ignore_errors=True)
