@@ -124,6 +124,13 @@ def test_ci_waits_for_pending_then_succeeds():
     assert gh.wait_for_ci("sha", timeout_s=600, grace_s=120) == ("success", [])
 
 
+def test_ci_calls_on_poll_once_per_poll():
+    gh = _gh([{"check_runs": []}, {"check_runs": [run("in_progress")]}, {"check_runs": [run("completed", "success")]}])
+    polls = []
+    assert gh.wait_for_ci("sha", timeout_s=600, grace_s=120, on_poll=lambda: polls.append(1)) == ("success", [])
+    assert len(polls) == 3
+
+
 def test_ci_failure_lists_failed_checks():
     gh = _gh([{"check_runs": [run("completed", "failure", "lint"), run("completed", "success", "tests")]}])
     assert gh.wait_for_ci("sha", timeout_s=600, grace_s=120) == ("failure", ["lint"])

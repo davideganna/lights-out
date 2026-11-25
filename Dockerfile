@@ -28,5 +28,6 @@ ENV DATA_DIR=/data \
     PYTHONUNBUFFERED=1
 VOLUME /data
 EXPOSE 8080
+HEALTHCHECK --interval=60s --timeout=10s --retries=3 CMD ["python", "-c", "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('REPORT_PORT', '8080'), timeout=5)"]
 ENTRYPOINT ["lights-out"]
 CMD ["run"]
