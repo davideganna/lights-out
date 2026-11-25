@@ -227,3 +227,38 @@ def test_warn_if_open_board(cfg, caplog):
     cfg.allowed_members = ["alice"]
     cli._warn_if_open_board(cfg)
     assert caplog.records == []
+
+
+def test_doctor_reports_alerts_without_the_url(monkeypatch, cfg, capsys):
+    monkeypatch.setattr(cli, "check_claude", lambda c: "m")
+    cfg.alert_webhook_url = "https://hooks.example/SECRET"
+    assert cli.cmd_doctor(cfg) == 0
+    out = capsys.readouterr().out
+    assert "Alerts: webhook set (events: failed" in out
+    assert "SECRET" not in out and "hooks.example" not in out
+
+
+def test_doctor_reports_alerts_off(monkeypatch, cfg, capsys):
+    monkeypatch.setattr(cli, "check_claude", lambda c: "m")
+    assert cli.cmd_doctor(cfg) == 0
+    assert "Alerts: off" in capsys.readouterr().out
+
+
+class _PostAlerter:
+    def __init__(self, ok):
+        self.ok, self.posted = ok, []
+
+    def post(self, text):
+        self.posted.append(text)
+        return self.ok
+
+
+def test_test_alert_success_failure_and_missing_url(cfg, capsys):
+    assert cli.cmd_test_alert(cfg, _PostAlerter(True)) == 1
+    assert "not set" in capsys.readouterr().out
+    cfg.alert_webhook_url = "https://hooks.example/SECRET"
+    fake = _PostAlerter(True)
+    assert cli.cmd_test_alert(cfg, fake) == 0
+    assert fake.posted == ["lights-out: test alert"] and "Test alert sent." in capsys.readouterr().out
+    assert cli.cmd_test_alert(cfg, _PostAlerter(False)) == 1
+    assert "FAILED" in capsys.readouterr().out

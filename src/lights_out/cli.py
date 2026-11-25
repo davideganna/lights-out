@@ -11,6 +11,7 @@ from datetime import datetime
 from .agents.agents import ClaudeAgents, check_claude
 from .core.config import Config, ConfigError
 from .core.routing import Route
+from .integrations.alerts import Alerter
 from .integrations.github import GitHubClient
 from .integrations.trello import TrelloClient
 from .orchestration.pipeline import Pipeline
@@ -35,6 +36,7 @@ def _workspace(cfg: Config, name: str, route: Route) -> Workspace:
 def build(cfg: Config) -> tuple[TrelloClient, Store, Scheduler]:
     trello = TrelloClient(cfg.trello_api_key, cfg.trello_token, cfg.trello_board_id)
     store = Store(cfg.db_path)
+    alerter = Alerter(cfg.alert_webhook_url, cfg.alert_events)
     pipeline = Pipeline(
         cfg,
         trello,
@@ -42,8 +44,9 @@ def build(cfg: Config) -> tuple[TrelloClient, Store, Scheduler]:
         store=store,
         agents_factory=lambda transcript_dir, budget: ClaudeAgents(cfg, transcript_dir, budget),
         workspace_factory=lambda t, route: _workspace(cfg, t.id, route),
+        alerter=alerter,
     )
-    return trello, store, Scheduler(cfg, trello, store, pipeline)
+    return trello, store, Scheduler(cfg, trello, store, pipeline, alerter=alerter)
 
 
 def _targets(cfg: Config) -> list[tuple[str, str]]:
@@ -138,6 +141,10 @@ def cmd_doctor(cfg: Config) -> int:
         print("Allowed members: " + ", ".join(f"@{m}" for m in cfg.allowed_members))
     else:
         print("Allowed members: WARNING: ALLOWED_MEMBERS is empty, any board member can queue work")
+    if cfg.alert_webhook_url:
+        print(f"Alerts: webhook set (events: {', '.join(cfg.alert_events)})")
+    else:
+        print("Alerts: off (ALERT_WEBHOOK_URL is empty)")
     try:
         model = check_claude(cfg)
         print(f"Claude: OK (model {model})")
@@ -148,12 +155,25 @@ def cmd_doctor(cfg: Config) -> int:
     return 0 if ok else 1
 
 
+def cmd_test_alert(cfg: Config, alerter: Alerter | None = None) -> int:
+    if not cfg.alert_webhook_url:
+        print("ALERT_WEBHOOK_URL is not set")
+        return 1
+    alerter = alerter or Alerter(cfg.alert_webhook_url, cfg.alert_events)
+    if alerter.post("lights-out: test alert"):
+        print("Test alert sent.")
+        return 0
+    print("Test alert FAILED (see the warning above).")
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="lights-out")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("run", help="daemon: process cards as soon as they are queued, serve reports")
     sub.add_parser("run-once", help="process every Queued card now, then exit")
     sub.add_parser("doctor", help="check Trello, GitHub (incl. branch protection) and Claude")
+    sub.add_parser("test-alert", help="send a test message to ALERT_WEBHOOK_URL")
     sub.add_parser("setup-board", help="create missing Trello lists and repository labels")
     boot = sub.add_parser("bootstrap", help="give an empty repository its first commit (CI, Makefile, CLAUDE.md)")
     boot.add_argument("repo", help="repository label or owner/repo (must be in REPO_LABELS or DEFAULT_REPO)")
@@ -173,6 +193,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "doctor":
         return cmd_doctor(cfg)
+    if args.command == "test-alert":
+        return cmd_test_alert(cfg)
     if args.command == "setup-board":
         trello = TrelloClient(cfg.trello_api_key, cfg.trello_token, cfg.trello_board_id)
         created = trello.ensure_lists(cfg.lists.all())

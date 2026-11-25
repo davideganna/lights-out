@@ -7,6 +7,10 @@ All notable changes to lights-out are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Alerts: set `ALERT_WEBHOOK_URL` (Slack, Discord `/slack`, Mattermost) to get a `{"text": ...}` POST when a card
+  fails, a PR is left open, a card goes to Needs Info, the daily budget is used up, the service starts or
+  stops, or the scheduler loop hits an unexpected error. `ALERT_EVENTS` selects events, `lights-out test-alert`
+  sends a test message and `doctor` reports whether alerts are on. The URL is never logged.
 - The dashboard's run detail links each run's agent transcripts (opened in a new tab). The server serves them at
   `/runs/<run_id>/<file>` (strict name check, 404 otherwise) and `data.json` has a `transcripts` list per run.
 
