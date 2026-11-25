@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -69,7 +70,12 @@ class Pipeline:
         """Process one card. Never raises for ticket-level problems; returns the outcome."""
         lists = self.cfg.lists
         run_id = self.store.start(
-            day=day, card_id=stub.id, card_short_id=stub.short_id, title=stub.title, card_url=stub.url
+            day=day,
+            card_id=stub.id,
+            card_short_id=stub.short_id,
+            title=stub.title,
+            card_url=stub.url,
+            settings=json.dumps(self.cfg.run_settings()),
         )
         self.heartbeat.set_work(stub.short_id, "start")
         agents = self.agents_factory(self.cfg.runs_dir / str(run_id), budget_usd)

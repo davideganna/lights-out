@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import signal
 import subprocess
 from dataclasses import dataclass, field
@@ -236,6 +237,7 @@ async def test_happy_path_merges_and_moves_to_done(cfg, origin):
     assert gh.pr_comments == []
     run = store.day_runs("2026-11-22")[0]
     assert run.status == "merged" and run.pr_url and run.cost_usd == pytest.approx(1.1)
+    assert json.loads(run.settings) == cfg.run_settings()
 
 
 async def test_unclear_ticket_goes_to_needs_info_with_questions(cfg, origin):

@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS runs (
     pr_url TEXT,
     summary TEXT NOT NULL DEFAULT '',
     error TEXT NOT NULL DEFAULT '',
-    repo TEXT NOT NULL DEFAULT ''
+    repo TEXT NOT NULL DEFAULT '',
+    settings TEXT NOT NULL DEFAULT ''
 );
 
 -- One row per stage change: when the stage started and the run's cumulative cost at that moment.
@@ -61,6 +62,7 @@ class Run:
     summary: str
     error: str
     repo: str = ""
+    settings: str = ""
 
 
 class Store:
@@ -72,12 +74,17 @@ class Store:
         if "repo" not in columns:  # databases created before repository routing
             self._db.execute("ALTER TABLE runs ADD COLUMN repo TEXT NOT NULL DEFAULT ''")
             self._db.commit()
+        if "settings" not in columns:  # databases created before per-run settings
+            self._db.execute("ALTER TABLE runs ADD COLUMN settings TEXT NOT NULL DEFAULT ''")
+            self._db.commit()
 
-    def start(self, *, day: str, card_id: str, card_short_id: str, title: str, card_url: str) -> int:
+    def start(
+        self, *, day: str, card_id: str, card_short_id: str, title: str, card_url: str, settings: str = ""
+    ) -> int:
         cur = self._db.execute(
-            "INSERT INTO runs (day, card_id, card_short_id, title, card_url, status, started_at)"
-            " VALUES (?, ?, ?, ?, ?, 'running', ?)",
-            (day, card_id, card_short_id, title, card_url, _now()),
+            "INSERT INTO runs (day, card_id, card_short_id, title, card_url, status, started_at, settings)"
+            " VALUES (?, ?, ?, ?, ?, 'running', ?, ?)",
+            (day, card_id, card_short_id, title, card_url, _now(), settings),
         )
         self._db.commit()
         return int(cur.lastrowid)
