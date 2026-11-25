@@ -7,6 +7,14 @@ All notable changes to lights-out are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Effort per agent role: `PLANNER_EFFORT` (default `high`), `CODER_EFFORT` (default empty) and `REVIEWER_EFFORT`
+  (default `high`) accept `low`, `medium`, `high`, `xhigh`, `max` or empty (model default); anything else is a
+  config error. Each run stores the models and efforts in a new `settings` column (JSON), added automatically
+  to existing databases and included in `data.json`.
+- Health heartbeat: `GET /healthz` on the dashboard port returns JSON (`status`, `last_beat`, `age_s`,
+  `current_card`, `stage`) with 200, or 503 when the last sign of life is older than `HEALTH_STALE_S`
+  (default 900). The scheduler loop, stage changes, CI polls and running agent calls beat. The Docker image has
+  a `HEALTHCHECK` that calls it.
 - Follow-up on held PRs: between cards, a watcher (every `PR_POLL_SECONDS`, default 120) checks each card whose
   latest run is `pr_open`. PRs merged by hand move the card to Done (run `merged`), PRs closed without merging
   move it to Failed. A `/lights-out merge` PR comment (or an approving review) from a user with write, maintain

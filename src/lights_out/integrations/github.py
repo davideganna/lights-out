@@ -200,13 +200,23 @@ class GitHubClient:
             out.append((run["name"], f"{text}\n\n{note}" if text else note))
         return out
 
-    def wait_for_ci(self, sha: str, *, timeout_s: int, grace_s: int, poll_s: int = 20) -> tuple[CIResult, list[str]]:
+    def wait_for_ci(
+        self,
+        sha: str,
+        *,
+        timeout_s: int,
+        grace_s: int,
+        poll_s: int = 20,
+        on_poll: Callable[[], None] | None = None,
+    ) -> tuple[CIResult, list[str]]:
         """Wait until all check runs finish.
 
         'none' means no check run appeared within grace_s (the repo has no CI)."""
         start = self._clock()
         while True:
             state, failed = self.ci_status(sha)
+            if on_poll is not None:
+                on_poll()
             elapsed = self._clock() - start
             if state in ("success", "failure"):
                 return state, failed

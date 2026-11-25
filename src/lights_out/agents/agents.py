@@ -227,7 +227,7 @@ class ClaudeAgents:
             append=prompts.TRIAGE_SYSTEM,
             max_turns=40,
             output_schema=prompts.TRIAGE_SCHEMA,
-            effort="high",
+            effort=self.cfg.planner_effort or None,
         )
         res = await self._run("triage", ticket.as_prompt(), opts)
         data = res.structured
@@ -248,6 +248,7 @@ class ClaudeAgents:
             tools=CODER_TOOLS,
             append=prompts.CODER_SYSTEM_APPEND.format(check_command=cmd),
             max_turns=self.cfg.coder_max_turns,
+            effort=self.cfg.coder_effort or None,
         )
         prompt = prompts.CODER_TASK.format(ticket=ticket.as_prompt(), plan=plan, check_command=cmd)
         return await self._run("implement", prompt, opts)
@@ -260,6 +261,7 @@ class ClaudeAgents:
             tools=CODER_TOOLS,
             append=prompts.CODER_SYSTEM_APPEND.format(check_command=cmd),
             max_turns=self.cfg.coder_max_turns,
+            effort=self.cfg.coder_effort or None,
             resume=session_id,
         )
         return await self._run("fix", message, opts)
@@ -274,7 +276,7 @@ class ClaudeAgents:
             append=prompts.REVIEW_SYSTEM,
             max_turns=40,
             output_schema=prompts.REVIEW_SCHEMA,
-            effort="high",
+            effort=self.cfg.reviewer_effort or None,
         )
         prompt = prompts.REVIEW_TASK.format(
             ticket=ticket.as_prompt(),

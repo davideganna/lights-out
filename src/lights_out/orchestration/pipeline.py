@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -18,6 +20,7 @@ from ..integrations.github import GitHubClient, GitHubError
 from ..integrations.trello import TrelloClient
 from ..reporting.report import write_reports
 from ..reporting.store import Store
+from .health import AGENT_BEAT_S, Heartbeat
 from .policy import merge_policy
 from .workspace import EmptyRepositoryError, Workspace, WorkspaceError
 
@@ -51,6 +54,8 @@ class Pipeline:
         store: Store,
         agents_factory: Callable[[Path, float], AgentsProtocol],
         workspace_factory: Callable[[Ticket, Route], Workspace],
+        heartbeat: Heartbeat | None = None,
+        agent_beat_s: float = AGENT_BEAT_S,
     ):
         self.cfg = cfg
         self.trello = trello
@@ -58,13 +63,21 @@ class Pipeline:
         self.store = store
         self.agents_factory = agents_factory
         self.workspace_factory = workspace_factory
+        self.heartbeat = heartbeat if heartbeat is not None else Heartbeat()
+        self.agent_beat_s = agent_beat_s
 
     async def process(self, stub: Ticket, day: str, budget_usd: float) -> Outcome:
         """Process one card. Never raises for ticket-level problems; returns the outcome."""
         lists = self.cfg.lists
         run_id = self.store.start(
-            day=day, card_id=stub.id, card_short_id=stub.short_id, title=stub.title, card_url=stub.url
+            day=day,
+            card_id=stub.id,
+            card_short_id=stub.short_id,
+            title=stub.title,
+            card_url=stub.url,
+            settings=json.dumps(self.cfg.run_settings()),
         )
+        self.heartbeat.set_work(stub.short_id, "start")
         agents = self.agents_factory(self.cfg.runs_dir / str(run_id), budget_usd)
         ws: Workspace | None = None
         stage = "start"
@@ -72,10 +85,12 @@ class Pipeline:
         def set_stage(name: str) -> None:
             nonlocal stage
             stage = name
+            self.heartbeat.set_work(stub.short_id, name)
             self.store.stage(run_id, name, agents.spent_usd)
             self._refresh_dashboard()
             log.info("[#%s] %s", stub.short_id, name)
 
+        ticker = asyncio.create_task(self._tick())
         try:
             ticket = self.trello.get_ticket(stub.id)
             allowed = self.cfg.allowed_members
@@ -191,8 +206,18 @@ class Pipeline:
             self.store.finish(run_id, status="failed", cost_usd=agents.spent_usd, error=msg[:4000])
             return Outcome("failed", error=msg)
         finally:
+            ticker.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await ticker
+            self.heartbeat.clear_work()
             if ws is not None:
                 ws.kill_agent_processes()
+
+    async def _tick(self) -> None:
+        """Keep the heartbeat alive while long agent calls are awaited."""
+        while True:
+            await asyncio.sleep(self.agent_beat_s)
+            self.heartbeat.beat()
 
     def _move(self, card_id: str, list_name: str) -> None:
         """Move a card; an empty list name means that stage column is disabled."""
@@ -290,7 +315,9 @@ class Pipeline:
             self._move(ticket.id, lists.pr_opened)
             self.trello.comment(ticket.id, f"{BOT} opened {pr.url}; waiting for CI.")
             set_stage("ci")
-            ci, failed = github.wait_for_ci(sha, timeout_s=cfg.ci_timeout_s, grace_s=cfg.ci_grace_s)
+            ci, failed = github.wait_for_ci(
+                sha, timeout_s=cfg.ci_timeout_s, grace_s=cfg.ci_grace_s, on_poll=self.heartbeat.beat
+            )
             cost = agents.spent_usd
 
             if ci == "success" or (ci == "none" and cfg.merge_without_ci):

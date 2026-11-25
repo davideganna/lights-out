@@ -124,6 +124,13 @@ def test_ci_waits_for_pending_then_succeeds():
     assert gh.wait_for_ci("sha", timeout_s=600, grace_s=120) == ("success", [])
 
 
+def test_ci_calls_on_poll_once_per_poll():
+    gh = _gh([{"check_runs": []}, {"check_runs": [run("in_progress")]}, {"check_runs": [run("completed", "success")]}])
+    polls = []
+    assert gh.wait_for_ci("sha", timeout_s=600, grace_s=120, on_poll=lambda: polls.append(1)) == ("success", [])
+    assert len(polls) == 3
+
+
 def test_ci_failure_lists_failed_checks():
     gh = _gh([{"check_runs": [run("completed", "failure", "lint"), run("completed", "success", "tests")]}])
     assert gh.wait_for_ci("sha", timeout_s=600, grace_s=120) == ("failure", ["lint"])
@@ -248,13 +255,29 @@ def test_store_adds_the_events_table_to_an_old_database(tmp_path):
     con.close()
     store = Store(db)
     assert store.all_runs()[0].repo == "" and store.all_events() == []
+    assert store.all_runs()[0].settings == ""
+    columns = {row[1] for row in sqlite3.connect(db).execute("PRAGMA table_info(runs)")}
+    assert "settings" in columns
+
+
+def test_store_writes_settings_per_run(tmp_path):
+    store = Store(tmp_path / "s.db")
+    store.start(day="n", card_id="c", card_short_id="1", title="t", card_url="u", settings='{"planner": "m/high"}')
+    assert store.all_runs()[0].settings == '{"planner": "m/high"}'
 
 
 def test_dashboard_data_snapshot(tmp_path):
     import json
 
     store = Store(tmp_path / "s.db")
-    rid = store.start(day="n", card_id="c", card_short_id="3", title="<b>x</b>", card_url="https://trello.com/c/x")
+    rid = store.start(
+        day="n",
+        card_id="c",
+        card_short_id="3",
+        title="<b>x</b>",
+        card_url="https://trello.com/c/x",
+        settings='{"planner": "m/high"}',
+    )
     store.set_repo(rid, "o/app")
     store.stage(rid, "triage", 0.1)
     store.finish(rid, status="merged", cost_usd=1.5, summary="did it", pr_url="https://github.com/o/app/pull/1")
@@ -264,6 +287,7 @@ def test_dashboard_data_snapshot(tmp_path):
     run = data["runs"][0]
     assert run["title"] == "<b>x</b>"  # raw: the page inserts it as text, never as HTML
     assert run["repo"] == "o/app" and run["status"] == "merged" and run["cost_usd"] == 1.5
+    assert run["settings"] == '{"planner": "m/high"}'
     assert [e["stage"] for e in data["events"]] == ["triage", "end"]
     assert not (tmp_path / "out" / "data.json.tmp").exists()
 

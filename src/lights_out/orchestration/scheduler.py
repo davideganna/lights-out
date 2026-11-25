@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import functools
 import http.server
+import io
+import json
 import logging
 import re
 import signal
@@ -24,6 +26,7 @@ from ..integrations.trello import TrelloClient
 from ..reporting.report import TRANSCRIPT_RE, write_reports
 from ..reporting.store import Store
 from .followup import PRWatcher
+from .health import Heartbeat
 from .pipeline import Pipeline
 
 log = logging.getLogger(__name__)
@@ -44,6 +47,7 @@ class Scheduler:
         trello: TrelloClient,
         store: Store,
         pipeline: Pipeline,
+        heartbeat: Heartbeat | None = None,
         *,
         pr_watcher: PRWatcher | None = None,
     ):
@@ -52,6 +56,7 @@ class Scheduler:
         self.trello = trello
         self.store = store
         self.pipeline = pipeline
+        self.heartbeat = heartbeat if heartbeat is not None else Heartbeat()
         self.stop = threading.Event()  # set by run_until_signal: finish the current card, take no more
         self._skipped: set[str] = set()  # cards already reported as over the attempt limit
 
@@ -93,6 +98,7 @@ class Scheduler:
 
     async def work_once(self) -> bool:
         """Process the next queued card. Returns False when there is nothing (affordable) to do."""
+        self.heartbeat.beat()
         day = today()
         left = self.budget_left(day)
         if left < 0.5:
@@ -125,7 +131,10 @@ class Scheduler:
                 log.exception("Watcher error")
                 worked = False
             if not worked and self.pr_watcher is not None and not self.stop.is_set():
-                self.pr_watcher.maybe_check()  # no card in progress: follow up on held PRs
+                try:
+                    self.pr_watcher.maybe_check()  # no card in progress: follow up on held PRs
+                except Exception:  # noqa: BLE001 - a follow-up problem must not stop the queue watcher
+                    log.exception("PR follow-up error")
             if not worked and not self.stop.is_set():  # after finishing a card, check the queue again straight away
                 await asyncio.sleep(self.cfg.poll_seconds)
 
@@ -183,8 +192,10 @@ def resolve_transcript(runs_dir: Path, raw_path: str) -> Path | None:
 class _DashboardHandler(http.server.SimpleHTTPRequestHandler):
     """Serves the dashboard from `directory` and agent transcripts from `runs_dir` under /runs/."""
 
-    def __init__(self, *args, runs_dir: Path, **kwargs) -> None:
+    def __init__(self, *args, runs_dir: Path, heartbeat: Heartbeat, stale_s: int, **kwargs) -> None:
         self.runs_dir = runs_dir
+        self.heartbeat = heartbeat
+        self.stale_s = stale_s
         super().__init__(*args, **kwargs)
 
     def log_message(self, *args) -> None:
@@ -192,6 +203,15 @@ class _DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
     def send_head(self):
         path = self.path
+        if path.split("#", 1)[0].split("?", 1)[0] == "/healthz":
+            status, body = self.heartbeat.snapshot(self.stale_s)
+            data = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            return io.BytesIO(data)
         if not (path == "/runs" or path.startswith("/runs/")):
             return super().send_head()
         target = resolve_transcript(self.runs_dir, path)
@@ -212,14 +232,22 @@ class _DashboardHandler(http.server.SimpleHTTPRequestHandler):
         return f
 
 
-def build_server(cfg: Config, host: str = "0.0.0.0") -> http.server.ThreadingHTTPServer:
+def build_server(
+    cfg: Config, host: str = "0.0.0.0", heartbeat: Heartbeat | None = None
+) -> http.server.ThreadingHTTPServer:
     # 0.0.0.0 is for the container; the compose port mapping restricts it to localhost on the host.
-    handler = functools.partial(_DashboardHandler, directory=str(cfg.reports_dir), runs_dir=cfg.runs_dir)
+    handler = functools.partial(
+        _DashboardHandler,
+        directory=str(cfg.reports_dir),
+        runs_dir=cfg.runs_dir,
+        heartbeat=heartbeat or Heartbeat(),
+        stale_s=cfg.health_stale_s,
+    )
     return http.server.ThreadingHTTPServer((host, cfg.report_port), handler)
 
 
-def serve_reports(cfg: Config) -> threading.Thread:
-    server = build_server(cfg)
+def serve_reports(cfg: Config, heartbeat: Heartbeat | None = None) -> threading.Thread:
+    server = build_server(cfg, heartbeat=heartbeat)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     log.info("Reports at http://localhost:%d/", cfg.report_port)

@@ -42,7 +42,7 @@ The phases are in priority order. Each item is a candidate ticket.
 - [x] Follow up on held PRs: merge on a maintainer's `/lights-out merge` comment or approving review; sync PRs
       merged or closed by hand
 - [ ] React to PR review comments: a human comment on the PR triggers a revision
-- [ ] Health: heartbeat plus alerts (Slack or email) when a card fails or the service stops
+- [ ] Health: heartbeat plus alerts (Slack or email) when a card fails or the service stops (heartbeat done)
 - [x] Interactive dashboard: outcomes, merge rate, spend, time and cost per stage, per-repository metrics,
       run timelines
 - [x] Link full agent transcripts from the dashboard
