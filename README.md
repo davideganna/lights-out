@@ -126,6 +126,10 @@ in `REPO_LABELS` and `DEFAULT_REPO`:
      Strongly recommended; see the Safety model.
    - Optional: `HUMAN_REVIEW_PATHS` and `MAX_AUTO_MERGE_LINES` decide which changes need a human to merge;
      see the Safety model.
+   - Optional: `PLANNER_MODEL`, `CODER_MODEL`, `REVIEWER_MODEL` pick the model per role, and `PLANNER_EFFORT`
+     (default `high`), `CODER_EFFORT` (default empty) and `REVIEWER_EFFORT` (default `high`) pick the effort
+     (`low`, `medium`, `high`, `xhigh`, `max`). Empty means the model's default effort. Any other value is a
+     config error. Each run records the models and efforts used as `settings` in the run log and `data.json`.
    - Optional: `HEALTH_STALE_S` (default 900): seconds without a sign of life before `/healthz` reports
      stale; see [Monitoring](#monitoring).
    - GitHub: a fine-grained token limited to those repositories with *Contents*, *Pull requests* and
