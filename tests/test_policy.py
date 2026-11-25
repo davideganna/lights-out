@@ -127,3 +127,10 @@ def test_config_empty_paths_and_zero_limit(env):
     cfg = Config.from_env(scrub_secrets=False)
     assert cfg.human_review_paths == []
     assert cfg.max_auto_merge_lines == 0
+
+
+def test_config_health_stale_default_and_override(env):
+    env.delenv("HEALTH_STALE_S", raising=False)
+    assert Config.from_env(scrub_secrets=False).health_stale_s == 900
+    env.setenv("HEALTH_STALE_S", "30")
+    assert Config.from_env(scrub_secrets=False).health_stale_s == 30

@@ -40,6 +40,9 @@ DEFAULT_HUMAN_REVIEW_PATHS: tuple[str, ...] = (
 )
 
 
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+
 class ConfigError(RuntimeError):
     pass
 
@@ -85,6 +88,13 @@ def _get(name: str, default: str | None = None, *, required: bool = False) -> st
     if required and not value:
         raise ConfigError(f"Missing required environment variable {name}")
     return value or ""
+
+
+def _effort(name: str, default: str) -> str:
+    value = _get(name, default).strip()
+    if value and value not in EFFORT_LEVELS:
+        raise ConfigError(f"{name} must be one of low, medium, high, xhigh, max or empty, got {value!r}")
+    return value
 
 
 @dataclass
@@ -137,6 +147,10 @@ class Config:
     planner_model: str = "claude-opus-5-5"
     coder_model: str = "claude-sonnet-5-5"
     reviewer_model: str = "claude-opus-5-5"
+    # Effort per role; empty = do not pass an effort (the model default applies)
+    planner_effort: str = "high"
+    coder_effort: str = ""
+    reviewer_effort: str = "high"
 
     # Budgets and limits
     max_ticket_usd: float = 10.0
@@ -157,6 +171,7 @@ class Config:
 
     # How often to check the Queued column for new cards
     poll_seconds: int = 15
+    health_stale_s: int = 900
 
     # Runtime
     data_dir: Path = Path("/data")
@@ -185,6 +200,14 @@ class Config:
     def db_path(self) -> Path:
         return self.data_dir / "state.db"
 
+    def run_settings(self) -> dict[str, str]:
+        """Model and effort per role, as recorded with each run."""
+        return {
+            "planner": f"{self.planner_model}/{self.planner_effort or 'default'}",
+            "coder": f"{self.coder_model}/{self.coder_effort or 'default'}",
+            "reviewer": f"{self.reviewer_model}/{self.reviewer_effort or 'default'}",
+        }
+
     @classmethod
     def from_env(cls, *, scrub_secrets: bool = True) -> Config:
         cfg = cls(
@@ -202,6 +225,9 @@ class Config:
             planner_model=_get("PLANNER_MODEL", "claude-opus-5-5"),
             coder_model=_get("CODER_MODEL", "claude-sonnet-5-5"),
             reviewer_model=_get("REVIEWER_MODEL", "claude-opus-5-5"),
+            planner_effort=_effort("PLANNER_EFFORT", "high"),
+            coder_effort=_effort("CODER_EFFORT", ""),
+            reviewer_effort=_effort("REVIEWER_EFFORT", "high"),
             max_ticket_usd=float(_get("MAX_TICKET_USD", "10")),
             max_day_usd=float(_get("MAX_DAY_USD", "50")),
             max_fix_attempts=int(_get("MAX_FIX_ATTEMPTS", "3")),
@@ -216,6 +242,7 @@ class Config:
             human_review_paths=parse_patterns(_get("HUMAN_REVIEW_PATHS", ",".join(DEFAULT_HUMAN_REVIEW_PATHS))),
             max_auto_merge_lines=int(_get("MAX_AUTO_MERGE_LINES", "400")),
             poll_seconds=int(_get("POLL_SECONDS", "15")),
+            health_stale_s=int(_get("HEALTH_STALE_S", "900")),
             data_dir=Path(_get("DATA_DIR", "/data")),
             agent_user=_get("AGENT_USER", ""),
             git_author_name=_get("GIT_AUTHOR_NAME", "lights-out"),

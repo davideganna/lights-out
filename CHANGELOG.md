@@ -11,6 +11,14 @@ All notable changes to lights-out are documented here. The format follows
   fails, a PR is left open, a card goes to Needs Info, the daily budget is used up, the service starts or
   stops, or the scheduler loop hits an unexpected error. `ALERT_EVENTS` selects events, `lights-out test-alert`
   sends a test message and `doctor` reports whether alerts are on. The URL is never logged.
+- Effort per agent role: `PLANNER_EFFORT` (default `high`), `CODER_EFFORT` (default empty) and `REVIEWER_EFFORT`
+  (default `high`) accept `low`, `medium`, `high`, `xhigh`, `max` or empty (model default); anything else is a
+  config error. Each run stores the models and efforts in a new `settings` column (JSON), added automatically
+  to existing databases and included in `data.json`.
+- Health heartbeat: `GET /healthz` on the dashboard port returns JSON (`status`, `last_beat`, `age_s`,
+  `current_card`, `stage`) with 200, or 503 when the last sign of life is older than `HEALTH_STALE_S`
+  (default 900). The scheduler loop, stage changes, CI polls and running agent calls beat. The Docker image has
+  a `HEALTHCHECK` that calls it.
 - The dashboard's run detail links each run's agent transcripts (opened in a new tab). The server serves them at
   `/runs/<run_id>/<file>` (strict name check, 404 otherwise) and `data.json` has a `transcripts` list per run.
 

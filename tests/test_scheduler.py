@@ -10,6 +10,7 @@ import pytest
 
 from lights_out.core.config import Config
 from lights_out.core.models import Ticket
+from lights_out.orchestration.health import Heartbeat
 from lights_out.orchestration.pipeline import Outcome
 from lights_out.orchestration.scheduler import MAX_ATTEMPTS_PER_DAY, Scheduler, run_until_signal, today
 from lights_out.reporting.store import Store
@@ -67,7 +68,8 @@ class FakeAlerter:
 
 @pytest.fixture
 def setup(tmp_path):
-    def make(cards, alerter=None, **pipe_kw):
+    def make(cards, alerter=None, sched_kw=None, **pipe_kw):
+        sched_kw = sched_kw or {}
         cfg = Config(
             trello_api_key="k",
             trello_token="t",
@@ -81,7 +83,7 @@ def setup(tmp_path):
         store = Store(tmp_path / "s.db")
         trello = FakeTrello(cards)
         pipe = FakePipeline(store, trello, **pipe_kw)
-        return Scheduler(cfg, trello, store, pipe, alerter=alerter), trello, store
+        return Scheduler(cfg, trello, store, pipe, alerter=alerter, **sched_kw), trello, store
 
     return make
 
@@ -93,6 +95,20 @@ async def test_processes_queue_top_first_then_idles(setup):
     assert not await sched.work_once()
     assert [r.card_short_id for r in store.day_runs(today())] == ["1", "2"]
     assert (sched.cfg.reports_dir / "data.json").exists()
+
+
+async def test_work_once_beats_on_empty_queue_and_when_budget_reached(setup):
+    now = [1000.0]
+    hb = Heartbeat(clock=lambda: now[0])
+    sched, trello, store = setup([], sched_kw={"heartbeat": hb})
+    now[0] = 1500.0
+    assert not await sched.work_once()
+    assert hb.snapshot(900)[1]["age_s"] == 0
+    sched, trello, store = setup([card(1)], sched_kw={"heartbeat": hb}, cost=9.8)
+    assert await sched.work_once()
+    now[0] = 1800.0
+    assert not await sched.work_once()  # budget used up
+    assert hb.snapshot(900)[1]["age_s"] == 0
 
 
 async def test_daily_budget_stops_work(setup):
