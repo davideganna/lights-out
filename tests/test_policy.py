@@ -127,3 +127,10 @@ def test_config_empty_paths_and_zero_limit(env):
     cfg = Config.from_env(scrub_secrets=False)
     assert cfg.human_review_paths == []
     assert cfg.max_auto_merge_lines == 0
+
+
+def test_pr_poll_seconds_default_and_override(env):
+    env.delenv("PR_POLL_SECONDS", raising=False)
+    assert Config.from_env(scrub_secrets=False).pr_poll_seconds == 120
+    env.setenv("PR_POLL_SECONDS", "30")
+    assert Config.from_env(scrub_secrets=False).pr_poll_seconds == 30

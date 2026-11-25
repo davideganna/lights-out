@@ -7,6 +7,10 @@ All notable changes to lights-out are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Follow-up on held PRs: between cards, a watcher (every `PR_POLL_SECONDS`, default 120) checks each card whose
+  latest run is `pr_open`. PRs merged by hand move the card to Done (run `merged`), PRs closed without merging
+  move it to Failed. A `/lights-out merge` PR comment (or an approving review) from a user with write, maintain
+  or admin access, posted after the latest commit, merges the PR when CI is green; each command is acted on once.
 - The dashboard's run detail links each run's agent transcripts (opened in a new tab). The server serves them at
   `/runs/<run_id>/<file>` (strict name check, 404 otherwise) and `data.json` has a `transcripts` list per run.
 

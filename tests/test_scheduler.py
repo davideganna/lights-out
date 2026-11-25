@@ -172,3 +172,27 @@ async def test_run_now_stops_after_signal_during_blocking_stage(setup):
     sched.pipeline.process = process_then_signal
     assert await asyncio.wait_for(run_until_signal(sched.run_now(), stop=sched.stop), timeout=30) is True
     assert [r.card_short_id for r in store.day_runs(today())] == ["1"]
+
+
+class FakeWatcher:
+    def __init__(self, sched_stop=None, stop_after=1):
+        self.calls = 0
+        self.sched_stop = sched_stop
+        self.stop_after = stop_after
+
+    def maybe_check(self):
+        self.calls += 1
+        if self.sched_stop is not None and self.calls >= self.stop_after:
+            self.sched_stop.set()
+
+
+async def test_run_forever_calls_watcher_only_when_idle(setup):
+    sched, trello, store = setup([card(1)])
+    watcher = FakeWatcher()
+    sched.pr_watcher = watcher
+    sched.cfg.poll_seconds = 0
+    watcher.sched_stop = sched.stop
+    await sched.run_forever()
+    # card 1 was processed first (no watcher call), then the idle iteration called it
+    assert len(store.all_runs()) == 1
+    assert watcher.calls == 1

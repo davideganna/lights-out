@@ -13,6 +13,7 @@ from .core.config import Config, ConfigError
 from .core.routing import Route
 from .integrations.github import GitHubClient
 from .integrations.trello import TrelloClient
+from .orchestration.followup import PRWatcher
 from .orchestration.pipeline import Pipeline
 from .orchestration.scheduler import Scheduler, run_until_signal, serve_reports
 from .orchestration.workspace import Workspace, bootstrap_repository
@@ -43,7 +44,8 @@ def build(cfg: Config) -> tuple[TrelloClient, Store, Scheduler]:
         agents_factory=lambda transcript_dir, budget: ClaudeAgents(cfg, transcript_dir, budget),
         workspace_factory=lambda t, route: _workspace(cfg, t.id, route),
     )
-    return trello, store, Scheduler(cfg, trello, store, pipeline)
+    watcher = PRWatcher(cfg, trello, store, lambda repo: GitHubClient(cfg.github_token, repo))
+    return trello, store, Scheduler(cfg, trello, store, pipeline, pr_watcher=watcher)
 
 
 def _targets(cfg: Config) -> list[tuple[str, str]]:

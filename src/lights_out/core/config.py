@@ -140,6 +140,8 @@ class Config:
 
     # How often to check the Queued column for new cards
     poll_seconds: int = 15
+    # How often to look at open PRs that were left for a human (merge command, merged or closed by hand)
+    pr_poll_seconds: int = 120
 
     # Runtime
     data_dir: Path = Path("/data")
@@ -195,6 +197,7 @@ class Config:
             human_review_paths=parse_patterns(_get("HUMAN_REVIEW_PATHS", ",".join(DEFAULT_HUMAN_REVIEW_PATHS))),
             max_auto_merge_lines=int(_get("MAX_AUTO_MERGE_LINES", "400")),
             poll_seconds=int(_get("POLL_SECONDS", "15")),
+            pr_poll_seconds=int(_get("PR_POLL_SECONDS", "120")),
             data_dir=Path(_get("DATA_DIR", "/data")),
             agent_user=_get("AGENT_USER", ""),
             git_author_name=_get("GIT_AUTHOR_NAME", "lights-out"),

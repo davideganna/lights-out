@@ -23,6 +23,7 @@ from ..core.config import Config
 from ..integrations.trello import TrelloClient
 from ..reporting.report import TRANSCRIPT_RE, write_reports
 from ..reporting.store import Store
+from .followup import PRWatcher
 from .pipeline import Pipeline
 
 log = logging.getLogger(__name__)
@@ -37,8 +38,17 @@ def today() -> str:
 
 
 class Scheduler:
-    def __init__(self, cfg: Config, trello: TrelloClient, store: Store, pipeline: Pipeline):
+    def __init__(
+        self,
+        cfg: Config,
+        trello: TrelloClient,
+        store: Store,
+        pipeline: Pipeline,
+        *,
+        pr_watcher: PRWatcher | None = None,
+    ):
         self.cfg = cfg
+        self.pr_watcher = pr_watcher
         self.trello = trello
         self.store = store
         self.pipeline = pipeline
@@ -114,6 +124,8 @@ class Scheduler:
             except Exception:  # noqa: BLE001 - keep the watcher alive (e.g. a Trello outage)
                 log.exception("Watcher error")
                 worked = False
+            if not worked and self.pr_watcher is not None and not self.stop.is_set():
+                self.pr_watcher.maybe_check()  # no card in progress: follow up on held PRs
             if not worked and not self.stop.is_set():  # after finishing a card, check the queue again straight away
                 await asyncio.sleep(self.cfg.poll_seconds)
 

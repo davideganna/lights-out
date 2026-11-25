@@ -37,6 +37,16 @@ CREATE TABLE IF NOT EXISTS events (
     cost_usd REAL NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS events_run ON events(run_id);
+
+-- Approval commands (PR comments or reviews) already acted on, so each is handled once.
+CREATE TABLE IF NOT EXISTS handled_commands (
+    repo TEXT,
+    kind TEXT,      -- comment | review
+    item_id TEXT,
+    run_id INTEGER,
+    at TEXT,
+    PRIMARY KEY (repo, kind, item_id)
+);
 """
 
 
@@ -115,6 +125,36 @@ class Store:
             (status, _now(), cost_usd, summary, error, pr_url, run_id),
         )
         self._event(run_id, "end", cost_usd)
+        self._db.commit()
+
+    def resolve_pr(self, run_id: int, *, status: str, event: str, error: str | None = None) -> None:
+        """Settle a run left as pr_open. Cost, summary, pr_url and finished_at stay the agent's own."""
+        cost = float(self._db.execute("SELECT cost_usd FROM runs WHERE id=?", (run_id,)).fetchone()[0])
+        if error is None:
+            self._db.execute("UPDATE runs SET status=? WHERE id=?", (status, run_id))
+        else:
+            self._db.execute("UPDATE runs SET status=?, error=? WHERE id=?", (status, error, run_id))
+        self._event(run_id, event, cost)
+        self._db.commit()
+
+    def open_prs(self) -> list[Run]:
+        """The latest run of each card, kept only if it is pr_open with a PR url."""
+        return self._rows(
+            "SELECT * FROM runs WHERE id IN (SELECT MAX(id) FROM runs GROUP BY card_id)"
+            " AND status='pr_open' AND COALESCE(pr_url, '') != '' ORDER BY id"
+        )
+
+    def is_handled(self, repo: str, kind: str, item_id: str) -> bool:
+        row = self._db.execute(
+            "SELECT 1 FROM handled_commands WHERE repo=? AND kind=? AND item_id=?", (repo, kind, str(item_id))
+        ).fetchone()
+        return row is not None
+
+    def mark_handled(self, repo: str, kind: str, item_id: str, run_id: int) -> None:
+        self._db.execute(
+            "INSERT OR IGNORE INTO handled_commands (repo, kind, item_id, run_id, at) VALUES (?, ?, ?, ?, ?)",
+            (repo, kind, str(item_id), run_id, _now()),
+        )
         self._db.commit()
 
     def running(self) -> list[Run]:
