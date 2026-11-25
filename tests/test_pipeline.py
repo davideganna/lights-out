@@ -15,6 +15,7 @@ from lights_out.core.config import Config
 from lights_out.core.models import Comment, Ticket
 from lights_out.integrations.github import GitHubError
 from lights_out.integrations.trello import queuing_member
+from lights_out.orchestration.health import Heartbeat
 from lights_out.orchestration.pipeline import Pipeline
 from lights_out.orchestration.policy import merge_policy
 from lights_out.orchestration.scheduler import run_until_signal
@@ -72,8 +73,11 @@ class FakeGitHub:
         self.prs.append(kw)
         return FakePR(head_sha=kw["head_sha"])
 
-    def wait_for_ci(self, sha, timeout_s, grace_s):
+    def wait_for_ci(self, sha, timeout_s, grace_s, on_poll=None):
         self.waits += 1
+        self.on_poll = on_poll
+        if on_poll:
+            on_poll()
         if self.on_wait:
             self.on_wait(self.waits)
         ci = self.ci_results.pop(0) if self.ci_results else self.ci
@@ -185,7 +189,7 @@ TICKET = Ticket(
 )
 
 
-def make(cfg, origin, agents, github, ticket=TICKET):
+def make(cfg, origin, agents, github, ticket=TICKET, **pipe_kw):
     trello = FakeTrello(ticket)
     store = Store(cfg.db_path)
     trello.repos = []  # repositories the pipeline asked GitHub / git for
@@ -206,6 +210,7 @@ def make(cfg, origin, agents, github, ticket=TICKET):
         store=store,
         agents_factory=lambda d, budget: agents,
         workspace_factory=workspace_factory,
+        **pipe_kw,
     )
     return pipe, trello, store
 
@@ -381,9 +386,9 @@ async def test_cancellation_puts_card_back_in_queue_and_records_interrupted(cfg,
 
 
 class SignalDuringCI(FakeGitHub):
-    def wait_for_ci(self, sha, timeout_s, grace_s):
+    def wait_for_ci(self, sha, timeout_s, grace_s, on_poll=None):
         signal.raise_signal(signal.SIGTERM)  # a stop request arrives while delivery is blocking
-        return super().wait_for_ci(sha, timeout_s, grace_s)
+        return super().wait_for_ci(sha, timeout_s, grace_s, on_poll)
 
 
 async def test_stop_during_delivery_finishes_the_card(cfg, origin):
@@ -779,3 +784,50 @@ async def test_rebase_git_failure_aborts_and_fails_the_stage(cfg, origin, tmp_pa
     out = await pipe.process(TICKET, "d", budget_usd=10)
     assert out.status == "failed" and "boom" in out.error and "stage: rebase" in trello.comments[-1]
     assert not rebase_in_progress(cfg) and not gh.merged
+
+
+class RecordingHeartbeat(Heartbeat):
+    def __init__(self):
+        super().__init__()
+        self.work: list[tuple] = []
+        self.beats = 0
+
+    def set_work(self, card, stage):
+        self.work.append((card, stage))
+        super().set_work(card, stage)
+
+    def beat(self):
+        self.beats += 1
+        super().beat()
+
+
+async def test_pipeline_records_stages_and_clears_work(cfg, origin):
+    hb, gh = RecordingHeartbeat(), FakeGitHub("success")
+    pipe, trello, store = make(cfg, origin, FakeAgents(), gh, heartbeat=hb)
+    out = await pipe.process(TICKET, "2026-11-22", budget_usd=10)
+    assert out.status == "merged", out.error
+    stages = [s for c, s in hb.work if c == "12"]
+    assert stages[0] == "start" and "triage" in stages and "ci" in stages
+    assert hb.work[-1] == (None, None)
+    assert gh.on_poll is not None
+    before = hb.beats
+    gh.on_poll()
+    assert hb.beats == before + 1
+    code, body = hb.snapshot(900)
+    assert body["current_card"] is None and body["stage"] is None
+
+
+class SlowAgents(FakeAgents):
+    async def implement(self, ticket, plan, cwd):
+        await asyncio.sleep(0.2)
+        return await super().implement(ticket, plan, cwd)
+
+
+async def test_ticker_beats_during_agent_call_and_stops_after(cfg, origin):
+    hb = RecordingHeartbeat()
+    pipe, trello, store = make(cfg, origin, SlowAgents(), FakeGitHub("success"), heartbeat=hb, agent_beat_s=0.01)
+    await pipe.process(TICKET, "2026-11-22", budget_usd=10)
+    assert hb.beats >= 3
+    after = hb.beats
+    await asyncio.sleep(0.05)
+    assert hb.beats == after

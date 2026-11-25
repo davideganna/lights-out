@@ -13,6 +13,7 @@ from .core.config import Config, ConfigError
 from .core.routing import Route
 from .integrations.github import GitHubClient
 from .integrations.trello import TrelloClient
+from .orchestration.health import Heartbeat
 from .orchestration.pipeline import Pipeline
 from .orchestration.scheduler import Scheduler, run_until_signal, serve_reports
 from .orchestration.workspace import Workspace, bootstrap_repository
@@ -35,6 +36,7 @@ def _workspace(cfg: Config, name: str, route: Route) -> Workspace:
 def build(cfg: Config) -> tuple[TrelloClient, Store, Scheduler]:
     trello = TrelloClient(cfg.trello_api_key, cfg.trello_token, cfg.trello_board_id)
     store = Store(cfg.db_path)
+    heartbeat = Heartbeat()
     pipeline = Pipeline(
         cfg,
         trello,
@@ -42,8 +44,9 @@ def build(cfg: Config) -> tuple[TrelloClient, Store, Scheduler]:
         store=store,
         agents_factory=lambda transcript_dir, budget: ClaudeAgents(cfg, transcript_dir, budget),
         workspace_factory=lambda t, route: _workspace(cfg, t.id, route),
+        heartbeat=heartbeat,
     )
-    return trello, store, Scheduler(cfg, trello, store, pipeline)
+    return trello, store, Scheduler(cfg, trello, store, pipeline, heartbeat)
 
 
 def _targets(cfg: Config) -> list[tuple[str, str]]:
@@ -199,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "run":
         _warn_if_open_board(cfg)
-        serve_reports(cfg)
+        serve_reports(cfg, scheduler.heartbeat)
         asyncio.run(run_until_signal(scheduler.run_forever(), stop=scheduler.stop))
     return 0
 

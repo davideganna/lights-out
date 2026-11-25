@@ -7,6 +7,10 @@ All notable changes to lights-out are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Health heartbeat: `GET /healthz` on the dashboard port returns JSON (`status`, `last_beat`, `age_s`,
+  `current_card`, `stage`) with 200, or 503 when the last sign of life is older than `HEALTH_STALE_S`
+  (default 900). The scheduler loop, stage changes, CI polls and running agent calls beat. The Docker image has
+  a `HEALTHCHECK` that calls it.
 - The dashboard's run detail links each run's agent transcripts (opened in a new tab). The server serves them at
   `/runs/<run_id>/<file>` (strict name check, 404 otherwise) and `data.json` has a `transcripts` list per run.
 

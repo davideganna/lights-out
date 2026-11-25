@@ -9,6 +9,7 @@ import threading
 import pytest
 
 from lights_out.core.config import Config
+from lights_out.orchestration.health import Heartbeat
 from lights_out.orchestration.scheduler import build_server, resolve_transcript
 from lights_out.reporting.report import snapshot, transcripts, write_reports
 from lights_out.reporting.store import Store
@@ -101,3 +102,45 @@ def test_snapshot_transcripts(tmp_path):
     assert by_id[b]["transcripts"] == []
     assert all(r["transcripts"] == [] for r in snapshot(store)["runs"])
     assert transcripts(None, a) == []
+
+
+def test_healthz(tmp_path):
+    cfg = Config(
+        trello_api_key="k",
+        trello_token="t",
+        trello_board_id="b",
+        github_token="g",
+        data_dir=tmp_path,
+        report_port=0,
+        health_stale_s=900,
+    )
+    cfg.reports_dir.mkdir(parents=True)
+    now = [5000.0]
+    hb = Heartbeat(clock=lambda: now[0])
+    hb.set_work("12", "triage")
+    server = build_server(cfg, host="127.0.0.1", heartbeat=hb)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def get(path, method="GET"):
+        conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
+        try:
+            conn.request(method, path)
+            resp = conn.getresponse()
+            return resp.status, resp.getheader("Content-Type"), resp.read()
+        finally:
+            conn.close()
+
+    try:
+        status, ctype, body = get("/healthz")
+        data = json.loads(body)
+        assert status == 200 and ctype == "application/json"
+        assert set(data) == {"status", "last_beat", "age_s", "current_card", "stage"}
+        assert data["status"] == "ok" and data["current_card"] == "12" and data["stage"] == "triage"
+        assert get("/healthz?x=1")[0] == 200
+        assert get("/healthz", "HEAD")[0] == 200
+        now[0] += 901
+        status, _, body = get("/healthz")
+        assert status == 503 and json.loads(body)["status"] == "stale"
+    finally:
+        server.shutdown()
+        server.server_close()

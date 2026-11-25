@@ -71,6 +71,29 @@ later, a webhook can replace the poll.
   PR, CI wait, merge) run to the end instead; if that takes longer than the 30 s `stop_grace_period`
   (e.g. waiting for CI), Docker kills the process and the crash recovery above applies.
 
+## Monitoring
+
+The dashboard server answers `GET /healthz` with JSON:
+
+```json
+{"status": "ok", "last_beat": "2026-01-01T12:00:00+00:00", "age_s": 12, "current_card": "20", "stage": "ci"}
+```
+
+It returns HTTP 200 while the last sign of life is at most `HEALTH_STALE_S` seconds old (default 900) and
+HTTP 503 with `"status": "stale"` otherwise. `current_card` and `stage` are `null` when idle.
+
+What counts as a beat: each poll of the Queued list, each stage change, each poll while waiting for CI, and
+every 60 seconds while a card is being processed (so long agent calls stay alive).
+
+- `docker ps` shows `healthy`/`unhealthy` (the image has a `HEALTHCHECK` that calls `/healthz`), and
+  `docker inspect --format '{{.State.Health.Status}}' <container>` prints it. Compose's
+  `restart: unless-stopped` does not restart an unhealthy container; it only restarts one that exited.
+- An external uptime monitor must run on the same host (`http://127.0.0.1:8080/healthz`) or reach it through
+  a reverse proxy, because the dashboard port is published on localhost only.
+- Limitation: blocking stages (`make check`, up to `CHECK_TIMEOUT_S`, default 1200) do not beat. If your
+  checks run long, set `HEALTH_STALE_S` above `CHECK_TIMEOUT_S`.
+- Only the `run` command serves `/healthz`, so one-off `docker compose run` containers show as unhealthy.
+
 ## Branch protection
 
 lights-out merges automatically once CI is green. If the base branch (`BASE_BRANCH`, default `main`) of a
@@ -103,6 +126,8 @@ in `REPO_LABELS` and `DEFAULT_REPO`:
      Strongly recommended; see the Safety model.
    - Optional: `HUMAN_REVIEW_PATHS` and `MAX_AUTO_MERGE_LINES` decide which changes need a human to merge;
      see the Safety model.
+   - Optional: `HEALTH_STALE_S` (default 900): seconds without a sign of life before `/healthz` reports
+     stale; see [Monitoring](#monitoring).
    - GitHub: a fine-grained token limited to those repositories with *Contents*, *Pull requests* and
      *Workflows* set to read/write and *Checks* set to read. Optionally add *Actions* set to read so CI
      failure logs can be sent to the coder (without it only check summaries are available), and
