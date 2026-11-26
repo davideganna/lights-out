@@ -55,6 +55,15 @@ class TrelloClient:
             self._list_ids = {lst["name"]: lst["id"] for lst in lists}
         return self._list_ids
 
+    def card_list(self, card_id: str) -> str | None:
+        """Name of the list the card is currently in, or None if it is not a known open list."""
+        id_list = self._req("GET", f"/cards/{card_id}", params={"fields": "idList"})["idList"]
+        for refresh in (False, True):
+            for name, lid in self.list_ids(refresh=refresh).items():
+                if lid == id_list:
+                    return name
+        return None
+
     def list_id(self, name: str) -> str:
         ids = self.list_ids()
         if name not in ids:

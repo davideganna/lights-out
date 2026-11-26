@@ -11,6 +11,7 @@ from collections.abc import Callable
 import httpx
 
 from ..core.config import Config
+from ..integrations.alerts import NullAlerter
 from ..integrations.github import GitHubClient, GitHubError, PRState
 from ..integrations.trello import TrelloClient, TrelloError
 from ..reporting.report import write_reports
@@ -34,7 +35,10 @@ class PRWatcher:
         store: Store,
         github_factory: Callable[[str], GitHubClient],
         clock: Callable[[], float] = time.monotonic,
+        *,
+        alerter=None,
     ):
+        self.alerter = alerter or NullAlerter()
         self.cfg = cfg
         self.trello = trello
         self.store = store
@@ -43,12 +47,19 @@ class PRWatcher:
         self._last: float | None = None
 
     def maybe_check(self) -> None:
-        if self.store.running():
+        if self.cfg.pr_poll_seconds <= 0 or self.store.running():
             return
         now = self.clock()
         if self._last is not None and now - self._last < self.cfg.pr_poll_seconds:
             return
         self._last = now
+        self.check_all()
+
+    def check_now(self) -> None:
+        """Startup check: don't wait for the interval."""
+        if self.cfg.pr_poll_seconds <= 0:
+            return
+        self._last = self.clock()
         self.check_all()
 
     def check_all(self) -> None:
@@ -76,6 +87,14 @@ class PRWatcher:
         if list_name:
             self.trello.move(card_id, list_name)
 
+    def _move_if_pr_opened(self, card_id: str, target: str) -> None:
+        """Move the card unless a human already moved it out of the PR Opened list."""
+        pr_opened = self.cfg.lists.pr_opened
+        if pr_opened and self.trello.card_list(card_id) != pr_opened:
+            log.info("Card %s is no longer in '%s'; not moving it", card_id, pr_opened)
+            return
+        self._move(card_id, target)
+
     def _check(self, run: Run, n: int) -> bool:
         """Returns True if the run changed."""
         lists = self.cfg.lists
@@ -84,13 +103,23 @@ class PRWatcher:
         if pr.merged:
             who = pr.merged_by or "someone"
             self.trello.comment(run.card_id, f"{BOT} {pr.url} was merged by @{who}.")
-            self._move(run.card_id, lists.done)
+            self._move_if_pr_opened(run.card_id, lists.done)
             self.store.resolve_pr(run.id, status="merged", event="merged_by_human")
+            if pr.head_ref.startswith("agent/"):
+                try:
+                    gh.delete_branch(pr.head_ref)
+                except httpx.HTTPError:
+                    log.exception("Could not delete branch %s", pr.head_ref)
             return True
         if pr.state == "closed":
             self.trello.comment(run.card_id, f"{BOT} {pr.url} was closed without merging.")
-            self._move(run.card_id, lists.failed or lists.needs_info)
+            self._move_if_pr_opened(run.card_id, lists.failed or lists.needs_info)
             self.store.resolve_pr(run.id, status="failed", event="pr_closed", error="PR closed without merging")
+            self.alerter.send(
+                "pr_open",
+                f'lights-out: card #{run.card_short_id} "{run.title}": PR closed without merging — '
+                f"{run.card_url} PR: {run.pr_url}",
+            )
             return True
         return self._check_open(run, gh, pr)
 

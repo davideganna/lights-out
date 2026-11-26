@@ -84,9 +84,10 @@ an author approve their own PR and lights-out opens PRs with the owner's token, 
   merge. Post the command again once CI is green: each command is acted on only once.
 - On success the PR is squash-merged, the branch deleted and the card moved to Done. This overrides the
   merge policy hold, since a human approved.
-- PRs merged by hand are synced (card to Done, run `merged`); PRs closed without merging move the card to Failed.
+- PRs merged by hand are synced (card to Done, run `merged`); PRs closed without merging move the card to Failed and send a
+  `pr_open` alert. A card is moved only if it is still in PR Opened (the run is updated either way), and the `agent/*` branch is deleted after a human merge.
 
-The watcher runs only when no card is in progress, at most every `PR_POLL_SECONDS` (default 120).
+The watcher runs only when no card is in progress, at most every `PR_POLL_SECONDS` (default 120), and once at startup. `PR_POLL_SECONDS=0` disables it.
 
 ## Monitoring
 

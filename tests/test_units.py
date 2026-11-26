@@ -46,6 +46,25 @@ def _trello(handler) -> TrelloClient:
     return TrelloClient("k", "t", "board", http=http)
 
 
+def test_trello_card_list_maps_id_to_name_and_refreshes_once():
+    lists = [[{"id": "L1", "name": "Ready"}]]
+    cards = {"c1": "L1", "c2": "L2", "c3": "L9"}
+    hits = {"lists": 0}
+
+    def handler(req: httpx.Request):
+        path = req.url.path
+        if path.endswith("/boards/board/lists"):
+            hits["lists"] += 1
+            extra = [{"id": "L2", "name": "Done"}] if hits["lists"] > 1 else []
+            return httpx.Response(200, json=lists[0] + extra)
+        return httpx.Response(200, json={"idList": cards[path.rsplit("/", 1)[1]]})
+
+    t = _trello(handler)
+    assert t.card_list("c1") == "Ready"
+    assert t.card_list("c2") == "Done"  # unknown at first, found after one refresh
+    assert t.card_list("c3") is None
+
+
 def test_trello_cards_sorted_and_comments_oldest_first():
     def handler(req: httpx.Request):
         path = req.url.path
@@ -290,6 +309,9 @@ def test_dashboard_data_snapshot(tmp_path):
     assert run["settings"] == '{"planner": "m/high"}'
     assert [e["stage"] for e in data["events"]] == ["triage", "end"]
     assert not (tmp_path / "out" / "data.json.tmp").exists()
+    html = page.read_text()
+    assert 'prClosed: evs.some((e) => e.stage === "pr_closed")' in html
+    assert 'r.prClosed ? "PR closed"' in html
 
 
 def _moved(user, date, list_id):

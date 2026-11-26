@@ -205,8 +205,15 @@ async def test_run_now_stops_after_signal_during_blocking_stage(setup):
 class FakeWatcher:
     def __init__(self, sched_stop=None, stop_after=1):
         self.calls = 0
+        self.now_calls = 0
+        self.on_now = None
         self.sched_stop = sched_stop
         self.stop_after = stop_after
+
+    def check_now(self):
+        self.now_calls += 1
+        if self.on_now:
+            self.on_now()
 
     def maybe_check(self):
         self.calls += 1
@@ -290,3 +297,51 @@ async def test_loop_exception_sends_error_alert(setup):
     assert alerter.events() == ["lifecycle", "error", "lifecycle"]
     text = alerter.sent[1][1]
     assert text.startswith("lights-out:") and "RuntimeError: trello down" in text and "second line" not in text
+
+
+def _seed_running(store):
+    rid = store.start(day=today(), card_id="old", card_short_id="9", title="t", card_url="u")
+    return rid
+
+
+async def test_run_now_checks_prs_once_after_recover(setup):
+    sched, trello, store = setup([])
+    rid = _seed_running(store)
+    watcher = FakeWatcher()
+    seen = []
+    watcher.on_now = lambda: seen.append(next(r.status for r in store.all_runs() if r.id == rid))
+    sched.pr_watcher = watcher
+    await sched.run_now()
+    assert watcher.now_calls == 1 and seen == ["interrupted"]
+
+
+async def test_run_forever_checks_prs_once_after_recover(setup):
+    sched, trello, store = setup([])
+    rid = _seed_running(store)
+    watcher = FakeWatcher(stop_after=1)
+    seen = []
+    watcher.on_now = lambda: seen.append(next(r.status for r in store.all_runs() if r.id == rid))
+    sched.pr_watcher = watcher
+    sched.cfg.poll_seconds = 0
+    watcher.sched_stop = sched.stop
+    await sched.run_forever()
+    assert watcher.now_calls == 1 and seen == ["interrupted"]
+
+
+async def test_failing_startup_pr_check_does_not_stop_the_scheduler(setup):
+    sched, trello, store = setup([card(1)])
+    watcher = FakeWatcher()
+
+    def boom():
+        raise OSError("boom")
+
+    watcher.on_now = boom
+    sched.pr_watcher = watcher
+    await sched.run_now()
+    assert len(store.all_runs()) == 1
+    sched2, _, _ = setup([])
+    sched2.pr_watcher = watcher
+    sched2.cfg.poll_seconds = 0
+    watcher.sched_stop = sched2.stop
+    await sched2.run_forever()
+    assert watcher.now_calls == 2
