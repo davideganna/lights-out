@@ -6,6 +6,12 @@ All notable changes to lights-out are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Dashboard redesign: dark-first theme (light still available), sticky top bar with live status, a
+  "Running now" strip for cards in progress, KPI tiles with icons and delta badges, Chart/Table switches,
+  status badges with SVG icons, an expandable runs table and a layout that fits phones. Still a single
+  self-contained page with no network assets.
+
 ### Added
 - Evaluation: `lights-out eval [--tasks ...] [--repeat N] [--out DIR] [--max-usd X]` runs the real pipeline (real
   agents, real checks and review, no Trello or GitHub) on tasks in `eval/tasks/` against the sample repository
