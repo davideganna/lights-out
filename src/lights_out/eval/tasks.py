@@ -1,4 +1,9 @@
-"""Evaluation task format: `eval/tasks/<id>/task.toml` plus hidden acceptance tests."""
+"""Evaluation task format: `eval/tasks/<id>/task.toml` plus hidden acceptance tests.
+
+A task directory may also hold `setup.patch` (applied to the sample repository before the agents start) and
+`solution.patch` (a reference solution on top of it). The solution is only used by this repository's own tests to
+prove the task is solvable; the runner never copies it anywhere the agents can see it.
+"""
 
 from __future__ import annotations
 
@@ -36,6 +41,12 @@ class Task:
     @property
     def setup_patch(self) -> Path | None:
         p = self.dir / "setup.patch"
+        return p if p.is_file() else None
+
+    @property
+    def solution_patch(self) -> Path | None:
+        """Reference solution, for tests only; never shown to agents."""
+        p = self.dir / "solution.patch"
         return p if p.is_file() else None
 
     def ticket(self) -> Ticket:

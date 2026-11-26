@@ -1,0 +1,93 @@
+diff --git a/src/ledger/cli.py b/src/ledger/cli.py
+index afd88ae..7bf6f74 100644
+--- a/src/ledger/cli.py
++++ b/src/ledger/cli.py
+@@ -3,7 +3,9 @@
+ from __future__ import annotations
+ 
+ import argparse
++import csv
+ import datetime
++import sys
+ from decimal import Decimal, InvalidOperation
+ 
+ from . import reports, storage
+@@ -27,6 +29,27 @@ def _amount(text: str) -> Decimal:
+     return value
+ 
+ 
++def _read_csv(path: str) -> list[Expense]:
++    """All rows of a CSV file with a header, or a ValueError naming the first bad line (the header is line 1)."""
++    expenses = []
++    with open(path, newline="", encoding="utf-8") as f:
++        reader = csv.DictReader(f)
++        missing = {"date", "amount", "category"} - set(reader.fieldnames or [])
++        if missing:
++            raise ValueError(f"line 1: missing column(s) {', '.join(sorted(missing))}")
++        for row in reader:
++            values = {key: (row.get(key) or "").strip() for key in ("date", "amount", "category", "note")}
++            try:
++                if not values["category"]:
++                    raise argparse.ArgumentTypeError("missing category")
++                expenses.append(
++                    Expense(_date(values["date"]), _amount(values["amount"]), values["category"], values["note"])
++                )
++            except argparse.ArgumentTypeError as e:
++                raise ValueError(f"line {reader.line_num}: {e}") from None
++    return expenses
++
++
+ def build_parser() -> argparse.ArgumentParser:
+     parser = argparse.ArgumentParser(prog="ledger", description="Track personal expenses.")
+     parser.add_argument("--file", default="ledger.json", help="data file (default: ledger.json)")
+@@ -40,6 +63,9 @@ def build_parser() -> argparse.ArgumentParser:
+ 
+     sub.add_parser("list", help="show all expenses")
+ 
++    imp = sub.add_parser("import", help="add the expenses of a CSV file (date,amount,category[,note])")
++    imp.add_argument("path")
++
+     report = sub.add_parser("report", help="show totals")
+     report.add_argument("--by", choices=["category", "month"], default="category")
+     return parser
+@@ -56,6 +82,14 @@ def main(argv: list[str] | None = None) -> int:
+     elif args.command == "list":
+         for e in expenses:
+             print(f"{e.date.isoformat()}  {e.amount}  {e.category}  {e.note}".rstrip())
++    elif args.command == "import":
++        try:
++            imported = _read_csv(args.path)
++        except (OSError, ValueError) as e:
++            print(f"error: {e}", file=sys.stderr)
++            return 1
++        storage.save(args.file, expenses + imported)
++        print(f"Imported {len(imported)} expenses")
+     elif args.command == "report":
+         totals = reports.totals_by_month(expenses) if args.by == "month" else reports.totals_by_category(expenses)
+         for key, total in totals.items():
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index c92871b..5c5759d 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -40,3 +40,21 @@ def test_add_rejects_bad_input(data, bad):
+     with pytest.raises(SystemExit) as exc:
+         main(["--file", data, "add", *bad])
+     assert exc.value.code == 2
++
++
++def test_import_csv(data, tmp_path, capsys):
++    csv_file = tmp_path / "in.csv"
++    csv_file.write_text("category,date,amount\nfood,2024-03-05,12.50\n")
++    assert main(["--file", data, "import", str(csv_file)]) == 0
++    assert capsys.readouterr().out.splitlines() == ["Imported 1 expenses"]
++    main(["--file", data, "list"])
++    assert capsys.readouterr().out.splitlines() == ["2024-03-05  12.50  food"]
++
++
++def test_import_with_a_bad_row_imports_nothing(data, tmp_path, capsys):
++    csv_file = tmp_path / "in.csv"
++    csv_file.write_text("date,amount,category\n2024-03-05,12.50,food\n2024-03-06,x,food\n")
++    assert main(["--file", data, "import", str(csv_file)]) == 1
++    assert "line 3" in capsys.readouterr().err
++    main(["--file", data, "list"])
++    assert capsys.readouterr().out == ""

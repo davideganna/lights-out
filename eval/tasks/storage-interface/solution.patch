@@ -1,0 +1,117 @@
+diff --git a/src/ledger/cli.py b/src/ledger/cli.py
+index afd88ae..b236517 100644
+--- a/src/ledger/cli.py
++++ b/src/ledger/cli.py
+@@ -45,13 +45,15 @@ def build_parser() -> argparse.ArgumentParser:
+     return parser
+ 
+ 
+-def main(argv: list[str] | None = None) -> int:
++def main(argv: list[str] | None = None, store: storage.Store | None = None) -> int:
+     args = build_parser().parse_args(argv)
+-    expenses = storage.load(args.file)
++    if store is None:
++        store = storage.JsonFileStore(args.file)
++    expenses = store.load()
+ 
+     if args.command == "add":
+         expenses.append(Expense(args.date, args.amount, args.category, args.note))
+-        storage.save(args.file, expenses)
++        store.save(expenses)
+         print(f"Added {args.amount} to {args.category} on {args.date.isoformat()}")
+     elif args.command == "list":
+         for e in expenses:
+diff --git a/src/ledger/storage.py b/src/ledger/storage.py
+index 1219a49..3dcb1f0 100644
+--- a/src/ledger/storage.py
++++ b/src/ledger/storage.py
+@@ -1,9 +1,10 @@
+-"""Keep expenses in a JSON file."""
++"""Keep expenses in a JSON file, or in memory."""
+ 
+ from __future__ import annotations
+ 
+ import json
+ from pathlib import Path
++from typing import Protocol
+ 
+ from .models import Expense
+ 
+@@ -19,3 +20,35 @@ def load(path: str | Path) -> list[Expense]:
+ def save(path: str | Path, expenses: list[Expense]) -> None:
+     data = [e.to_dict() for e in expenses]
+     Path(path).write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
++
++
++class Store(Protocol):
++    def load(self) -> list[Expense]: ...
++
++    def save(self, expenses: list[Expense]) -> None: ...
++
++
++class JsonFileStore:
++    """Expenses kept in a JSON file."""
++
++    def __init__(self, path: str | Path) -> None:
++        self.path = Path(path)
++
++    def load(self) -> list[Expense]:
++        return load(self.path)
++
++    def save(self, expenses: list[Expense]) -> None:
++        save(self.path, expenses)
++
++
++class MemoryStore:
++    """Expenses kept in memory only, for tests."""
++
++    def __init__(self, expenses: list[Expense] | None = None) -> None:
++        self._expenses = list(expenses or [])
++
++    def load(self) -> list[Expense]:
++        return list(self._expenses)
++
++    def save(self, expenses: list[Expense]) -> None:
++        self._expenses = list(expenses)
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index c92871b..23b298d 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -40,3 +40,14 @@ def test_add_rejects_bad_input(data, bad):
+     with pytest.raises(SystemExit) as exc:
+         main(["--file", data, "add", *bad])
+     assert exc.value.code == 2
++
++
++def test_main_uses_the_given_store_instead_of_a_file(data, capsys):
++    from ledger.storage import MemoryStore
++
++    store = MemoryStore()
++    assert main(["--file", data, "add", "2024-03-05", "12.50", "food"], store=store) == 0
++    assert len(store.load()) == 1
++    capsys.readouterr()
++    assert main(["list"], store=store) == 0
++    assert capsys.readouterr().out.splitlines() == ["2024-03-05  12.50  food"]
+diff --git a/tests/test_storage.py b/tests/test_storage.py
+index f5a2a61..20a58de 100644
+--- a/tests/test_storage.py
++++ b/tests/test_storage.py
+@@ -17,3 +17,18 @@ def test_save_then_load(tmp_path):
+     ]
+     storage.save(path, items)
+     assert storage.load(path) == items
++
++
++def test_memory_store_round_trip():
++    items = [Expense(datetime.date(2024, 3, 5), Decimal("12.50"), "food", "lunch")]
++    store = storage.MemoryStore()
++    assert store.load() == []
++    store.save(items)
++    assert store.load() == items
++
++
++def test_json_file_store_round_trip(tmp_path):
++    store = storage.JsonFileStore(tmp_path / "l.json")
++    items = [Expense(datetime.date(2024, 3, 5), Decimal("12.50"), "food", "lunch")]
++    store.save(items)
++    assert store.load() == items

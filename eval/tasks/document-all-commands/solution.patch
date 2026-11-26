@@ -1,0 +1,38 @@
+diff --git a/README.md b/README.md
+index 91ea718..762a6ab 100644
+--- a/README.md
++++ b/README.md
+@@ -7,8 +7,16 @@ ledger add 2024-01-31 950.00 rent --note "January"
+ ledger add 2024-02-03 12.50 food
+ ledger list
+ ledger report --by category   # or --by month
++ledger categories             # the categories in use, sorted, one per line
+ ```
+ 
++Commands:
++
++- `ledger add DATE AMOUNT CATEGORY [--note TEXT]` records an expense.
++- `ledger list` shows all expenses.
++- `ledger report [--by category|month]` shows totals per category (the default) or per month.
++- `ledger categories` shows the distinct categories you have used.
++
+ Use `--file PATH` (before the command) to pick the data file; the default is `ledger.json`.
+ 
+ ## Development
+diff --git a/tests/test_readme.py b/tests/test_readme.py
+new file mode 100644
+index 0000000..d73c37f
+--- /dev/null
++++ b/tests/test_readme.py
+@@ -0,0 +1,11 @@
++from pathlib import Path
++
++from ledger.cli import build_parser
++
++README = (Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
++
++
++def test_readme_has_an_example_for_every_command():
++    commands = next(a for a in build_parser()._actions if a.dest == "command").choices
++    for name in commands:
++        assert f"ledger {name}" in README

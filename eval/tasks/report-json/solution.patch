@@ -1,0 +1,50 @@
+diff --git a/src/ledger/cli.py b/src/ledger/cli.py
+index afd88ae..67b3167 100644
+--- a/src/ledger/cli.py
++++ b/src/ledger/cli.py
+@@ -4,6 +4,7 @@ from __future__ import annotations
+ 
+ import argparse
+ import datetime
++import json
+ from decimal import Decimal, InvalidOperation
+ 
+ from . import reports, storage
+@@ -42,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
+ 
+     report = sub.add_parser("report", help="show totals")
+     report.add_argument("--by", choices=["category", "month"], default="category")
++    report.add_argument("--json", action="store_true", help="print the report as a JSON object")
+     return parser
+ 
+ 
+@@ -58,6 +60,9 @@ def main(argv: list[str] | None = None) -> int:
+             print(f"{e.date.isoformat()}  {e.amount}  {e.category}  {e.note}".rstrip())
+     elif args.command == "report":
+         totals = reports.totals_by_month(expenses) if args.by == "month" else reports.totals_by_category(expenses)
++        if args.json:
++            print(json.dumps({key: str(total) for key, total in totals.items()}))
++            return 0
+         for key, total in totals.items():
+             print(f"{key}  {total}")
+     return 0
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index c92871b..329e770 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -40,3 +40,15 @@ def test_add_rejects_bad_input(data, bad):
+     with pytest.raises(SystemExit) as exc:
+         main(["--file", data, "add", *bad])
+     assert exc.value.code == 2
++
++
++def test_report_json(data, capsys):
++    import json
++
++    main(["--file", data, "add", "2024-03-05", "10.50", "food"])
++    main(["--file", data, "add", "2024-03-06", "5", "food"])
++    capsys.readouterr()
++    main(["--file", data, "report", "--json"])
++    assert json.loads(capsys.readouterr().out) == {"food": "15.50"}
++    main(["--file", data, "report", "--by", "month", "--json"])
++    assert json.loads(capsys.readouterr().out) == {"2024-03": "15.50"}

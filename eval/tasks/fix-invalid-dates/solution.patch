@@ -1,0 +1,33 @@
+diff --git a/src/ledger/cli.py b/src/ledger/cli.py
+index 23d703d..afd88ae 100644
+--- a/src/ledger/cli.py
++++ b/src/ledger/cli.py
+@@ -12,8 +12,7 @@ from .models import Expense
+ 
+ def _date(text: str) -> datetime.date:
+     try:
+-        year, month, day = (int(part) for part in text.split("-"))
+-        return datetime.date(year, month, 1) + datetime.timedelta(days=day - 1)
++        return datetime.date.fromisoformat(text)
+     except ValueError:
+         raise argparse.ArgumentTypeError(f"not a date (use YYYY-MM-DD): {text!r}") from None
+ 
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index c92871b..ae5fb5a 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -40,3 +40,14 @@ def test_add_rejects_bad_input(data, bad):
+     with pytest.raises(SystemExit) as exc:
+         main(["--file", data, "add", *bad])
+     assert exc.value.code == 2
++
++
++@pytest.mark.parametrize("day", ["2024-02-30", "2023-02-29", "2024-04-31", "2024-01-32"])
++def test_add_rejects_dates_that_do_not_exist(data, day):
++    with pytest.raises(SystemExit) as exc:
++        main(["--file", data, "add", day, "1", "x"])
++    assert exc.value.code == 2
++
++
++def test_add_accepts_a_leap_day(data):
++    assert main(["--file", data, "add", "2024-02-29", "1", "x"]) == 0

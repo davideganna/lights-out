@@ -1,0 +1,18 @@
+id = "delete-expense"
+title = "Delete an expense"
+category = "feature"
+expected = "proceed"
+description = """
+Sometimes I enter an expense by mistake and there is no way to take it back, except by editing `ledger.json`
+by hand.
+
+I would like a new command, `ledger delete N`, that removes the N-th expense as shown by `ledger list`
+(1 is the first line). It should print `Deleted` followed by the line that `ledger list` showed for it, for
+example:
+
+    $ ledger delete 2
+    Deleted 2024-03-06  3  transport
+
+The other expenses stay as they are, in the same order. If N is 0, bigger than the number of expenses, or
+not a number, it should say so, exit with a non-zero code and leave the data file untouched.
+"""

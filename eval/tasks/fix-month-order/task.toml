@@ -1,0 +1,16 @@
+id = "fix-month-order"
+title = "Monthly report lists months in the wrong order"
+category = "bug"
+expected = "proceed"
+description = """
+I entered my April expenses before I remembered the ones from March:
+
+    ledger add 2024-04-02 30 food
+    ledger add 2024-03-05 10 food
+
+`ledger report --by month` then shows 2024-04 first and 2024-03 second. The months should always be listed
+in calendar order, oldest first, no matter the order I added things in, and across years too (2023-12
+comes before 2024-01).
+
+Please fix it. The totals themselves are right.
+"""

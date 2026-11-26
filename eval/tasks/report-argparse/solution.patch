@@ -1,0 +1,59 @@
+diff --git a/src/ledger/cli.py b/src/ledger/cli.py
+index d595f39..afd88ae 100644
+--- a/src/ledger/cli.py
++++ b/src/ledger/cli.py
+@@ -40,16 +40,13 @@ def build_parser() -> argparse.ArgumentParser:
+ 
+     sub.add_parser("list", help="show all expenses")
+ 
+-    # The report command reads its own options by hand (see `main`).
+-    sub.add_parser("report", help="show totals", add_help=False)
++    report = sub.add_parser("report", help="show totals")
++    report.add_argument("--by", choices=["category", "month"], default="category")
+     return parser
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+-    parser = build_parser()
+-    args, extra = parser.parse_known_args(argv)
+-    if extra and args.command != "report":
+-        parser.error(f"unrecognized arguments: {' '.join(extra)}")
++    args = build_parser().parse_args(argv)
+     expenses = storage.load(args.file)
+ 
+     if args.command == "add":
+@@ -60,12 +57,7 @@ def main(argv: list[str] | None = None) -> int:
+         for e in expenses:
+             print(f"{e.date.isoformat()}  {e.amount}  {e.category}  {e.note}".rstrip())
+     elif args.command == "report":
+-        by = "category"
+-        if "--by" in extra:
+-            position = extra.index("--by")
+-            if extra[position + 1 : position + 2] == ["month"]:
+-                by = "month"
+-        totals = reports.totals_by_month(expenses) if by == "month" else reports.totals_by_category(expenses)
++        totals = reports.totals_by_month(expenses) if args.by == "month" else reports.totals_by_category(expenses)
+         for key, total in totals.items():
+             print(f"{key}  {total}")
+     return 0
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index c92871b..0d93367 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -40,3 +40,16 @@ def test_add_rejects_bad_input(data, bad):
+     with pytest.raises(SystemExit) as exc:
+         main(["--file", data, "add", *bad])
+     assert exc.value.code == 2
++
++
++def test_report_rejects_unknown_by_value(data):
++    with pytest.raises(SystemExit) as exc:
++        main(["--file", data, "report", "--by", "yearly"])
++    assert exc.value.code == 2
++
++
++def test_report_help_exits_cleanly(data, capsys):
++    with pytest.raises(SystemExit) as exc:
++        main(["--file", data, "report", "--help"])
++    assert exc.value.code == 0
++    assert "--by" in capsys.readouterr().out

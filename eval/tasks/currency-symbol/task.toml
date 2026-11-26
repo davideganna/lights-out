@@ -1,0 +1,19 @@
+id = "currency-symbol"
+title = "Add a currency symbol to amounts"
+category = "feature"
+expected = "proceed"
+description = """
+The amounts that `ledger` prints are bare numbers, and when I show the output to my partner nobody knows
+which currency it is. Please add a currency symbol to the amounts.
+
+This applies to every amount the tool prints: the confirmation of `ledger add`, the lines of `ledger list`
+and the totals in `ledger report`. The data file itself should not change.
+"""
+
+[[comments]]
+author = "lights-out"
+text = "Which currency symbol should be used, and does it go before or after the number?"
+
+[[comments]]
+author = "owner"
+text = "Use € and put it after the number, like 12.50 €"

@@ -1,0 +1,17 @@
+id = "report-total"
+title = "Add a total line to the report"
+category = "feature"
+expected = "proceed"
+description = """
+`ledger report` shows one line per category or month, and I always add them up in my head.
+
+Please end the report with one more line, `total` followed by two spaces and the sum of everything, in both
+modes (`--by category`, the default, and `--by month`). For example:
+
+    $ ledger report
+    food  20.70
+    transport  3
+    total  23.70
+
+With no expenses at all the report should consist of just `total  0`. The other lines stay as they are.
+"""

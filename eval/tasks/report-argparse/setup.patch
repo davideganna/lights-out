@@ -1,0 +1,38 @@
+diff --git a/src/ledger/cli.py b/src/ledger/cli.py
+index afd88ae..d595f39 100644
+--- a/src/ledger/cli.py
++++ b/src/ledger/cli.py
+@@ -40,13 +40,16 @@ def build_parser() -> argparse.ArgumentParser:
+ 
+     sub.add_parser("list", help="show all expenses")
+ 
+-    report = sub.add_parser("report", help="show totals")
+-    report.add_argument("--by", choices=["category", "month"], default="category")
++    # The report command reads its own options by hand (see `main`).
++    sub.add_parser("report", help="show totals", add_help=False)
+     return parser
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+-    args = build_parser().parse_args(argv)
++    parser = build_parser()
++    args, extra = parser.parse_known_args(argv)
++    if extra and args.command != "report":
++        parser.error(f"unrecognized arguments: {' '.join(extra)}")
+     expenses = storage.load(args.file)
+ 
+     if args.command == "add":
+@@ -57,7 +60,12 @@ def main(argv: list[str] | None = None) -> int:
+         for e in expenses:
+             print(f"{e.date.isoformat()}  {e.amount}  {e.category}  {e.note}".rstrip())
+     elif args.command == "report":
+-        totals = reports.totals_by_month(expenses) if args.by == "month" else reports.totals_by_category(expenses)
++        by = "category"
++        if "--by" in extra:
++            position = extra.index("--by")
++            if extra[position + 1 : position + 2] == ["month"]:
++                by = "month"
++        totals = reports.totals_by_month(expenses) if by == "month" else reports.totals_by_category(expenses)
+         for key, total in totals.items():
+             print(f"{key}  {total}")
+     return 0

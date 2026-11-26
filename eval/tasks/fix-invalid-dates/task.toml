@@ -1,0 +1,16 @@
+id = "fix-invalid-dates"
+title = "Impossible dates are accepted"
+category = "bug"
+expected = "proceed"
+description = """
+I made a typo and ran
+
+    ledger add 2024-02-30 20 food
+
+I expected an error, since there is no 30 February. Instead it said "Added 20 to food on 2024-03-01" and
+saved the expense on a different day than I typed. The same happens with 2023-02-29, 2024-04-31 and 2024-01-32.
+
+Please make `ledger add` reject dates that don't exist, with the same kind of error it already gives for
+text that isn't a date (exit code 2), and don't save anything in that case. Real dates, including 29 February
+in a leap year such as 2024-02-29, must keep working.
+"""

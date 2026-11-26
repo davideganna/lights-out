@@ -1,0 +1,50 @@
+diff --git a/src/ledger/models.py b/src/ledger/models.py
+index e754f2b..9f55846 100644
+--- a/src/ledger/models.py
++++ b/src/ledger/models.py
+@@ -29,5 +29,5 @@ class Expense:
+             date=datetime.date.fromisoformat(data["date"]),
+             amount=Decimal(data["amount"]),
+             category=data["category"],
+-            note=data.get("note", ""),
++            note=data.get("notes", ""),
+         )
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index c92871b..73f22dc 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -14,7 +14,7 @@ def test_add_and_list(data, capsys):
+     capsys.readouterr()
+     assert main(["--file", data, "list"]) == 0
+     assert capsys.readouterr().out.splitlines() == [
+-        "2024-03-05  12.50  food  lunch",
++        "2024-03-05  12.50  food",
+         "2024-03-06  3  transport",
+     ]
+ 
+diff --git a/tests/test_models.py b/tests/test_models.py
+index 96e9c9a..6247e7f 100644
+--- a/tests/test_models.py
++++ b/tests/test_models.py
+@@ -5,7 +5,7 @@ from ledger.models import Expense
+ 
+ 
+ def test_round_trip():
+-    e = Expense(datetime.date(2024, 3, 5), Decimal("12.50"), "food", "lunch")
++    e = Expense(datetime.date(2024, 3, 5), Decimal("12.50"), "food")
+     assert Expense.from_dict(e.to_dict()) == e
+ 
+ 
+diff --git a/tests/test_storage.py b/tests/test_storage.py
+index f5a2a61..d312682 100644
+--- a/tests/test_storage.py
++++ b/tests/test_storage.py
+@@ -12,7 +12,7 @@ def test_missing_file_is_empty(tmp_path):
+ def test_save_then_load(tmp_path):
+     path = tmp_path / "l.json"
+     items = [
+-        Expense(datetime.date(2024, 3, 5), Decimal("12.50"), "food", "lunch"),
++        Expense(datetime.date(2024, 3, 5), Decimal("12.50"), "food"),
+         Expense(datetime.date(2024, 3, 6), Decimal("3"), "transport"),
+     ]
+     storage.save(path, items)

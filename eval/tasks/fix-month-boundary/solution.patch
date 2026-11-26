@@ -1,0 +1,34 @@
+diff --git a/src/ledger/reports.py b/src/ledger/reports.py
+index a9439ff..7faa48f 100644
+--- a/src/ledger/reports.py
++++ b/src/ledger/reports.py
+@@ -2,7 +2,6 @@
+ 
+ from __future__ import annotations
+ 
+-import datetime
+ from collections import defaultdict
+ from decimal import Decimal
+ 
+@@ -20,7 +19,5 @@ def totals_by_month(expenses: list[Expense]) -> dict[str, Decimal]:
+     """Totals per calendar month, keyed "YYYY-MM"."""
+     totals: dict[str, Decimal] = defaultdict(Decimal)
+     for e in expenses:
+-        # A day counts toward the month it falls in; shift by a day to be safe at the edges.
+-        shifted = e.date + datetime.timedelta(days=1)
+-        totals[shifted.strftime("%Y-%m")] += e.amount
++        totals[e.date.strftime("%Y-%m")] += e.amount
+     return dict(sorted(totals.items()))
+diff --git a/tests/test_reports.py b/tests/test_reports.py
+index 826154f..781045c 100644
+--- a/tests/test_reports.py
++++ b/tests/test_reports.py
+@@ -30,3 +30,8 @@ def test_totals_by_month():
+ def test_empty():
+     assert totals_by_category([]) == {}
+     assert totals_by_month([]) == {}
++
++
++def test_last_day_of_the_month_stays_in_its_month():
++    items = [_e(datetime.date(2024, 1, 31), "950", "rent")]
++    assert totals_by_month(items) == {"2024-01": Decimal("950")}

@@ -1,0 +1,19 @@
+id = "edit-expense"
+title = "Edit an expense"
+category = "feature"
+expected = "proceed"
+description = """
+When I type the wrong amount or category I have to delete the file or edit it by hand.
+
+I would like a command `ledger edit N` that changes the N-th expense as shown by `ledger list` (1 is the
+first line). It takes `--amount X` and/or `--category C`, and only the fields I give are changed: the date and
+the note stay as they were. It prints `Updated` followed by the new line as `ledger list` would show it, for
+example:
+
+    $ ledger edit 2 --amount 4.50
+    Updated 2024-03-06  4.50  transport
+
+The amount follows the same rules as in `ledger add` (a positive number). The expense keeps its place in the
+list. If I give no option, a bad amount, or an N that is 0, too big, or not a number, it should say so, exit
+with a non-zero code and leave the data file untouched.
+"""

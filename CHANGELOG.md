@@ -13,6 +13,11 @@ All notable changes to lights-out are documented here. The format follows
   self-contained page with no network assets.
 
 ### Added
+- Evaluation: 14 more tasks that should be implemented (6 features, 4 planted bugs, 2 refactors, 1 docs task and 1
+  task whose answer is in the card comments), each with hidden acceptance tests, plus an optional `solution.patch`
+  per task (a reference solution the runner never shows to agents). Tests check that every acceptance suite fails
+  on the sample repository and passes with its reference solution, and that planted bugs slip past the sample's own
+  `make check`.
 - Evaluation: `lights-out eval [--tasks ...] [--repeat N] [--out DIR] [--max-usd X]` runs the real pipeline (real
   agents, real checks and review, no Trello or GitHub) on tasks in `eval/tasks/` against the sample repository
   `eval/sample-repo/` (`ledger`), then runs hidden acceptance tests on the merged branch. It writes `results.json`

@@ -1,0 +1,27 @@
+diff --git a/src/ledger/reports.py b/src/ledger/reports.py
+index 9a6821a..7faa48f 100644
+--- a/src/ledger/reports.py
++++ b/src/ledger/reports.py
+@@ -20,4 +20,4 @@ def totals_by_month(expenses: list[Expense]) -> dict[str, Decimal]:
+     totals: dict[str, Decimal] = defaultdict(Decimal)
+     for e in expenses:
+         totals[e.date.strftime("%Y-%m")] += e.amount
+-    return dict(totals)
++    return dict(sorted(totals.items()))
+diff --git a/tests/test_reports.py b/tests/test_reports.py
+index 826154f..1ca483c 100644
+--- a/tests/test_reports.py
++++ b/tests/test_reports.py
+@@ -30,3 +30,12 @@ def test_totals_by_month():
+ def test_empty():
+     assert totals_by_category([]) == {}
+     assert totals_by_month([]) == {}
++
++
++def test_months_are_in_calendar_order_whatever_the_input_order():
++    items = [
++        _e(datetime.date(2024, 4, 2), "7", "rent"),
++        _e(datetime.date(2024, 1, 5), "1", "food"),
++        _e(datetime.date(2023, 12, 31), "2", "food"),
++    ]
++    assert list(totals_by_month(items)) == ["2023-12", "2024-01", "2024-04"]

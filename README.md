@@ -241,7 +241,8 @@ docker compose run --rm -v "$PWD/eval-results:/app/eval-results" lights-out eval
 Results go to `DIR/results.json` (default `eval-results/<UTC timestamp>/`), with a line per task on stdout. The eval
 database, workspaces and agent transcripts also live in `DIR`, never in `/data`. The exit code is 0 whenever the
 evaluation completes, whatever the pass rate. A task is a directory with `task.toml`, hidden `acceptance/` tests and an
-optional `setup.patch` (see the existing ones).
+optional `setup.patch` (see the existing ones). A task may also have a `solution.patch`, a reference solution that
+only this repository's tests use to prove the task is solvable; it is never given to the agents.
 
 ## Development
 

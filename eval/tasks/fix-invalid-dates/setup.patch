@@ -1,0 +1,14 @@
+diff --git a/src/ledger/cli.py b/src/ledger/cli.py
+index afd88ae..23d703d 100644
+--- a/src/ledger/cli.py
++++ b/src/ledger/cli.py
+@@ -12,7 +12,8 @@ from .models import Expense
+ 
+ def _date(text: str) -> datetime.date:
+     try:
+-        return datetime.date.fromisoformat(text)
++        year, month, day = (int(part) for part in text.split("-"))
++        return datetime.date(year, month, 1) + datetime.timedelta(days=day - 1)
+     except ValueError:
+         raise argparse.ArgumentTypeError(f"not a date (use YYYY-MM-DD): {text!r}") from None
+ 
