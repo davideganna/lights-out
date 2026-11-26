@@ -1,0 +1,8 @@
+id = "multiple-currencies"
+title = "Support multiple currencies"
+category = "ambiguous"
+expected = "needs_info"
+description = """
+I spend in both EUR and USD, especially when I travel, and right now `ledger` just treats every amount as the
+same unit. I want ledger to support multiple currencies so my lists and reports make sense.
+"""

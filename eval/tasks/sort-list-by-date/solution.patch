@@ -1,0 +1,27 @@
+--- a/src/ledger/cli.py	2026-11-26 22:34:58.638783118 +0000
++++ b/src/ledger/cli.py	2026-11-26 22:37:01.446559282 +0000
+@@ -54,7 +54,7 @@
+         storage.save(args.file, expenses)
+         print(f"Added {args.amount} to {args.category} on {args.date.isoformat()}")
+     elif args.command == "list":
+-        for e in expenses:
++        for e in sorted(expenses, key=lambda e: e.date):
+             print(f"{e.date.isoformat()}  {e.amount}  {e.category}  {e.note}".rstrip())
+     elif args.command == "report":
+         totals = reports.totals_by_month(expenses) if args.by == "month" else reports.totals_by_category(expenses)
+--- a/tests/test_cli.py	2026-11-26 22:34:58.638783118 +0000
++++ b/tests/test_cli.py	2026-11-26 22:37:01.446816882 +0000
+@@ -19,6 +19,13 @@
+     ]
+ 
+ 
++def test_list_is_sorted_by_date_oldest_first(data, capsys):
++    main(["--file", data, "add", "2024-03-01", "7", "food"])
++    capsys.readouterr()
++    main(["--file", data, "list"])
++    assert capsys.readouterr().out.splitlines()[0] == "2024-03-01  7  food"
++
++
+ def test_report_by_category(data, capsys):
+     main(["--file", data, "add", "2024-03-05", "10", "food"])
+     main(["--file", data, "add", "2024-03-06", "5", "food"])

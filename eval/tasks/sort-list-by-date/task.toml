@@ -1,0 +1,8 @@
+id = "sort-list-by-date"
+title = "Sort the list by date"
+category = "feature"
+expected = "proceed"
+description = """
+`ledger list` shows the expenses in the order I typed them, which is a mess when I add things late.
+Please sort it by date.
+"""

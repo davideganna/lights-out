@@ -155,6 +155,7 @@ async def run_task(
     # tmp (not list it). Safe: the hidden tests are only copied in after the pipeline has finished.
     tmp.chmod(0o711)
     try:
+        # Only sample_repo and setup_patch reach the agent; never apply or copy solution.patch or acceptance/
         origin = make_origin(sample_repo, task.setup_patch, tmp)
         pipe = Pipeline(
             cfg,
