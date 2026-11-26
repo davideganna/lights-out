@@ -479,6 +479,7 @@ function enrich(data) {
       ms: (end ? end.getTime() : now) - start.getTime(),
       lastGroup: lastStage ? lastStage.group : (r.stage ? stageGroup(r.stage) || r.stage : "–"),
       firstPass: r.status === "merged" && fixes === 0 && revisions === 0,
+      prClosed: evs.some((e) => e.stage === "pr_closed"),
     };
   });
 }
@@ -862,7 +863,7 @@ function detailRow(r) {
   const ls = links(r, false);
   if (ls.length) left.append(h("div", { class: "links" }, ...ls));
   if (r.summary) left.append(h("h4", { text: "Summary" }), h("p", { text: r.summary }));
-  if (r.error) left.append(h("h4", { text: r.status === "pr_open" ? "Why it wasn't merged" : "Error" }), h("pre", { text: r.error }));
+  if (r.error) left.append(h("h4", { text: r.status === "pr_open" ? "Why it wasn't merged" : r.prClosed ? "PR closed" : "Error" }), h("pre", { text: r.error }));
   if (!r.summary && !r.error) left.append(h("p", { class: "hint", text: r.status === "running" ? "In progress: " + (r.stage || "starting") : "No summary recorded." }));
 
   const right = h("div", {}, h("h4", { text: "Timeline" }));

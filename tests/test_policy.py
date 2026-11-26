@@ -141,3 +141,5 @@ def test_pr_poll_seconds_default_and_override(env):
     assert Config.from_env(scrub_secrets=False).pr_poll_seconds == 120
     env.setenv("PR_POLL_SECONDS", "30")
     assert Config.from_env(scrub_secrets=False).pr_poll_seconds == 30
+    env.setenv("PR_POLL_SECONDS", "0")
+    assert Config.from_env(scrub_secrets=False).pr_poll_seconds == 0
