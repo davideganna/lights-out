@@ -7,6 +7,10 @@ All notable changes to lights-out are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Alerts: set `ALERT_WEBHOOK_URL` (Slack, Discord `/slack`, Mattermost) to get a `{"text": ...}` POST when a card
+  fails, a PR is left open, a card goes to Needs Info, the daily budget is used up, the service starts or
+  stops, or the scheduler loop hits an unexpected error. `ALERT_EVENTS` selects events, `lights-out test-alert`
+  sends a test message and `doctor` reports whether alerts are on. The URL is never logged.
 - Effort per agent role: `PLANNER_EFFORT` (default `high`), `CODER_EFFORT` (default empty) and `REVIEWER_EFFORT`
   (default `high`) accept `low`, `medium`, `high`, `xhigh`, `max` or empty (model default); anything else is a
   config error. Each run stores the models and efforts in a new `settings` column (JSON), added automatically

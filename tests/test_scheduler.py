@@ -54,9 +54,21 @@ def card(n: int) -> Ticket:
     return Ticket(id=f"c{n}", short_id=str(n), title=f"card {n}", description="", url=f"u{n}")
 
 
+class FakeAlerter:
+    def __init__(self):
+        self.sent: list[tuple[str, str]] = []
+
+    def send(self, event, text):
+        self.sent.append((event, text))
+        return True
+
+    def events(self) -> list[str]:
+        return [e for e, _ in self.sent]
+
+
 @pytest.fixture
 def setup(tmp_path):
-    def make(cards, sched_kw=None, **pipe_kw):
+    def make(cards, alerter=None, sched_kw=None, **pipe_kw):
         sched_kw = sched_kw or {}
         cfg = Config(
             trello_api_key="k",
@@ -71,7 +83,7 @@ def setup(tmp_path):
         store = Store(tmp_path / "s.db")
         trello = FakeTrello(cards)
         pipe = FakePipeline(store, trello, **pipe_kw)
-        return Scheduler(cfg, trello, store, pipe, **sched_kw), trello, store
+        return Scheduler(cfg, trello, store, pipe, alerter=alerter, **sched_kw), trello, store
 
     return make
 
@@ -188,3 +200,52 @@ async def test_run_now_stops_after_signal_during_blocking_stage(setup):
     sched.pipeline.process = process_then_signal
     assert await asyncio.wait_for(run_until_signal(sched.run_now(), stop=sched.stop), timeout=30) is True
     assert [r.card_short_id for r in store.day_runs(today())] == ["1"]
+
+
+async def test_budget_alert_once_per_day(setup, monkeypatch):
+    alerter = FakeAlerter()
+    sched, trello, store = setup([card(1), card(2)], alerter=alerter, cost=9.8)
+    assert await sched.work_once()
+    assert alerter.sent == []  # merged card: nothing
+    assert not await sched.work_once()
+    assert not await sched.work_once()
+    assert alerter.events() == ["budget"]
+    assert alerter.sent[0][1].startswith("lights-out:") and "MAX_DAY_USD" in alerter.sent[0][1]
+    monkeypatch.setattr("lights_out.orchestration.scheduler.today", lambda: "2999-01-01")
+    sched.cfg.max_day_usd = 0
+    assert not await sched.work_once()
+    assert alerter.events() == ["budget", "budget"]
+
+
+async def test_run_forever_alerts_started_and_stopping(setup):
+    alerter = FakeAlerter()
+    sched, trello, store = setup([], alerter=alerter)
+    sched.cfg.poll_seconds = 1
+    task = asyncio.ensure_future(run_until_signal(sched.run_forever(), stop=sched.stop))
+    await asyncio.sleep(0.05)
+    assert alerter.events() == ["lifecycle"] and "started" in alerter.sent[0][1]
+    signal.raise_signal(signal.SIGTERM)
+    assert await asyncio.wait_for(task, timeout=30) is True
+    assert alerter.events() == ["lifecycle", "lifecycle"] and "stopping" in alerter.sent[1][1]
+
+
+async def test_run_now_sends_no_lifecycle_alerts(setup):
+    alerter = FakeAlerter()
+    sched, *_ = setup([card(1)], alerter=alerter)
+    await sched.run_now()
+    assert alerter.sent == []
+
+
+async def test_loop_exception_sends_error_alert(setup):
+    alerter = FakeAlerter()
+    sched, *_ = setup([card(1)], alerter=alerter)
+
+    async def boom(c, day, budget_usd):
+        sched.stop.set()
+        raise RuntimeError("trello down\nsecond line")
+
+    sched.pipeline.process = boom
+    await asyncio.wait_for(sched.run_forever(), timeout=30)
+    assert alerter.events() == ["lifecycle", "error", "lifecycle"]
+    text = alerter.sent[1][1]
+    assert text.startswith("lights-out:") and "RuntimeError: trello down" in text and "second line" not in text

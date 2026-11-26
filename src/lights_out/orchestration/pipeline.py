@@ -16,6 +16,7 @@ from ..agents.risk import find_risk_flags, format_risk_flags
 from ..core.config import Config
 from ..core.models import Ticket
 from ..core.routing import Route, RoutingError, resolve
+from ..integrations.alerts import NullAlerter
 from ..integrations.github import GitHubClient, GitHubError
 from ..integrations.trello import TrelloClient
 from ..reporting.report import write_reports
@@ -28,6 +29,11 @@ log = logging.getLogger(__name__)
 
 BOT = "🤖 **lights-out**"
 MAX_REBASES = 2
+
+
+def _first_line(text: str) -> str:
+    lines = text.strip().splitlines()
+    return lines[0] if lines else ""
 
 
 class StageFailed(RuntimeError):
@@ -56,7 +62,9 @@ class Pipeline:
         workspace_factory: Callable[[Ticket, Route], Workspace],
         heartbeat: Heartbeat | None = None,
         agent_beat_s: float = AGENT_BEAT_S,
+        alerter=None,
     ):
+        self.alerter = alerter or NullAlerter()
         self.cfg = cfg
         self.trello = trello
         self.github_factory = github_factory
@@ -81,6 +89,11 @@ class Pipeline:
         agents = self.agents_factory(self.cfg.runs_dir / str(run_id), budget_usd)
         ws: Workspace | None = None
         stage = "start"
+        pr_url: str | None = None  # set once the PR exists, so a later failure alert can link it
+
+        def on_pr(url: str) -> None:
+            nonlocal pr_url
+            pr_url = url
 
         def set_stage(name: str) -> None:
             nonlocal stage
@@ -158,7 +171,18 @@ class Pipeline:
 
             set_stage("deliver")
             return await self._deliver(
-                ticket, ws, github, run_id, agents, session, set_stage, summary, review.summary, triage.plan, flags
+                ticket,
+                ws,
+                github,
+                run_id,
+                agents,
+                session,
+                set_stage,
+                summary,
+                review.summary,
+                triage.plan,
+                flags,
+                on_pr,
             )
 
         except EmptyRepositoryError:
@@ -204,6 +228,11 @@ class Pipeline:
             )
             self._move(stub.id, lists.failed or lists.needs_info)
             self.store.finish(run_id, status="failed", cost_usd=agents.spent_usd, error=msg[:4000])
+            self.alerter.send(
+                "failed",
+                f'lights-out: card #{stub.short_id} "{stub.title}" failed at stage '
+                f"{stage_name}: {_first_line(str(e))} — {stub.url}" + (f" PR: {pr_url}" if pr_url else ""),
+            )
             return Outcome("failed", error=msg)
         finally:
             ticker.cancel()
@@ -271,6 +300,11 @@ class Pipeline:
         )
         self.trello.move(ticket.id, lists.needs_info)
         self.store.finish(run_id, status="needs_info", cost_usd=cost, summary=summary)
+        self.alerter.send(
+            "needs_info",
+            f'lights-out: card #{ticket.short_id} "{ticket.title}" moved to Needs Info: '
+            f"{_first_line(summary)} — {ticket.url}",
+        )
         return Outcome("needs_info", summary=summary)
 
     async def _deliver(
@@ -286,6 +320,7 @@ class Pipeline:
         review_summary: str,
         plan: str,
         risk_flags: list[str],
+        on_pr: Callable[[str], None] = lambda url: None,
     ) -> Outcome:
         lists, cfg = self.cfg.lists, self.cfg
         ci_fixes = 0
@@ -312,6 +347,7 @@ class Pipeline:
             pr = github.open_or_update_pr(
                 head=ticket.branch, base=cfg.base_branch, title=ticket.title, body=body, head_sha=sha
             )
+            on_pr(pr.url)
             self._move(ticket.id, lists.pr_opened)
             self.trello.comment(ticket.id, f"{BOT} opened {pr.url}; waiting for CI.")
             set_stage("ci")
@@ -338,6 +374,7 @@ class Pipeline:
                     self.store.finish(
                         run_id, status="pr_open", cost_usd=cost, summary=summary, pr_url=pr.url, error=reason
                     )
+                    self._alert_pr_open(ticket, reason, pr.url)
                     return Outcome("pr_open", summary=summary, pr_url=pr.url, error=reason)
                 if ws.base_moved():
                     session, summary, review_summary, risk_flags, rebases = await self._rebase(
@@ -391,7 +428,15 @@ class Pipeline:
             self.trello.comment(ticket.id, f"{BOT} opened {pr.url} but didn't merge it: {reason}. Please take a look.")
             self._move(ticket.id, lists.failed or lists.needs_info)
             self.store.finish(run_id, status="pr_open", cost_usd=cost, summary=summary, pr_url=pr.url, error=reason)
+            self._alert_pr_open(ticket, reason, pr.url)
             return Outcome("pr_open", summary=summary, pr_url=pr.url, error=reason)
+
+    def _alert_pr_open(self, ticket: Ticket, reason: str, pr_url: str) -> None:
+        self.alerter.send(
+            "pr_open",
+            f'lights-out: card #{ticket.short_id} "{ticket.title}": PR opened but not merged ({reason}) '
+            f"— {ticket.url} PR: {pr_url}",
+        )
 
     async def _rebase(
         self,
