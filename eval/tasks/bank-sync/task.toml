@@ -1,0 +1,8 @@
+id = "bank-sync"
+title = "Sync the ledger with my bank"
+category = "too_large"
+expected = "needs_info"
+description = """
+Typing every expense by hand is tedious. I want `ledger` to sync automatically with my bank: import my
+transactions, put each one in the right category and keep everything up to date without me doing anything.
+"""

@@ -1,0 +1,7 @@
+id = "list-total-line"
+title = "Show a total line in the list"
+category = "feature"
+expected = "proceed"
+description = """
+Show a total line at the bottom of `ledger list`.
+"""

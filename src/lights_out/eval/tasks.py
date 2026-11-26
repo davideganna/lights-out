@@ -38,6 +38,12 @@ class Task:
         p = self.dir / "setup.patch"
         return p if p.is_file() else None
 
+    @property
+    def solution_patch(self) -> Path | None:
+        """Reference solution, used only by the repository's own tests; never shown to agents."""
+        p = self.dir / "solution.patch"
+        return p if p.is_file() else None
+
     def ticket(self) -> Ticket:
         return Ticket(
             id=self.id,

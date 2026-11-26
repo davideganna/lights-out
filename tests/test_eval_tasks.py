@@ -35,8 +35,15 @@ def test_valid_task_loads_with_defaults(tmp_path):
     assert t.comments == []
     assert t.acceptance_command == DEFAULT_ACCEPTANCE_COMMAND
     assert t.setup_patch is None
+    assert t.solution_patch is None
     ticket = t.ticket()
     assert (ticket.id, ticket.short_id, ticket.url, ticket.labels) == ("t1", "t1", "eval://t1", [])
+
+
+def test_solution_patch_is_found_when_present(tmp_path):
+    d = _task(tmp_path, VALID)
+    (d / "solution.patch").write_text("")
+    assert load_task(d).solution_patch == d / "solution.patch"
 
 
 def test_comments_become_ticket_comments(tmp_path):
@@ -87,6 +94,23 @@ def test_real_tasks_load():
     assert {"add-category-filter", "fix-month-boundary", "export-somewhere"} <= set(tasks)
     assert tasks["export-somewhere"].expected == "needs_info"
     assert tasks["fix-month-boundary"].setup_patch is not None
+    needs_info = {
+        "multiple-currencies": "ambiguous",
+        "nicer-report": "ambiguous",
+        "add-users": "ambiguous",
+        "decimals-contradiction": "ambiguous",
+        "web-interface": "too_large",
+        "bank-sync": "too_large",
+        "why-is-report-slow": "not_actionable",
+        "meeting-notes": "not_actionable",
+    }
+    for task_id, category in needs_info.items():
+        t = tasks[task_id]
+        assert (t.expected, t.category) == ("needs_info", category), task_id
+        assert not t.acceptance_dir.exists(), task_id
+    for task_id in ("sort-list-by-date", "list-total-line"):
+        assert tasks[task_id].expected == "proceed", task_id
+        assert tasks[task_id].solution_patch is not None, task_id
 
 
 @pytest.fixture
@@ -109,19 +133,20 @@ def test_sample_repo_check_passes(sample_copy):
     assert r.returncode == 0, r.stdout + r.stderr
 
 
-def _acceptance(repo: Path) -> int:
+def _acceptance(repo: Path, task) -> int:
     dest = repo / "tests" / "acceptance"
-    shutil.copytree(TASKS / "fix-month-boundary" / "acceptance", dest)
+    shutil.copytree(task.acceptance_dir, dest)
     r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/acceptance"], cwd=repo)
     return r.returncode
 
 
 def test_month_boundary_acceptance_passes_clean_and_fails_when_bugged(sample_copy):
-    assert _acceptance(sample_copy) == 0
+    task = load_task(TASKS / "fix-month-boundary")
+    assert _acceptance(sample_copy, task) == 0
     shutil.rmtree(sample_copy / "tests" / "acceptance")
     patch = TASKS / "fix-month-boundary" / "setup.patch"
     subprocess.run(["git", "apply", str(patch)], cwd=sample_copy, check=True)
-    assert _acceptance(sample_copy) != 0
+    assert _acceptance(sample_copy, task) != 0
 
 
 def test_planted_bug_passes_the_sample_repos_own_checks(sample_copy):
@@ -129,3 +154,19 @@ def test_planted_bug_passes_the_sample_repos_own_checks(sample_copy):
     subprocess.run(["git", "apply", str(patch)], cwd=sample_copy, check=True)
     r = subprocess.run(["make", "check", f"PYTHON={sys.executable}"], cwd=sample_copy, capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+@pytest.mark.parametrize(
+    "task",
+    [t for t in load_tasks(TASKS) if t.expected == "proceed" and t.solution_patch],
+    ids=lambda t: t.id,
+)
+def test_solution_patch_turns_acceptance_tests_green(sample_copy, task):
+    if task.setup_patch:
+        subprocess.run(["git", "apply", str(task.setup_patch)], cwd=sample_copy, check=True)
+    assert _acceptance(sample_copy, task) != 0
+    shutil.rmtree(sample_copy / "tests" / "acceptance")
+    subprocess.run(["git", "apply", str(task.solution_patch)], cwd=sample_copy, check=True)
+    r = subprocess.run(["make", "check", f"PYTHON={sys.executable}"], cwd=sample_copy, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _acceptance(sample_copy, task) == 0
