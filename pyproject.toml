@@ -39,3 +39,7 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+# eval/tasks/*/acceptance tests import the sample repository's package.
+known-first-party = ["ledger"]

@@ -1,0 +1,10 @@
+id = "add-category-filter"
+title = "Filter the expense list by category"
+category = "feature"
+expected = "proceed"
+description = """
+When I run `ledger list` I see every expense I have ever entered, and the list is getting long.
+
+I would like to be able to run `ledger list --category food` and see only the expenses in the
+food category. Without the option, `ledger list` should keep showing everything, exactly as today.
+"""
