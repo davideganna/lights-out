@@ -11,7 +11,10 @@ from .routing import parse_repo_labels
 # Secrets the orchestrator needs but the coding agent must never see. They are
 # removed from os.environ after loading, because the Claude Code subprocess
 # inherits os.environ.
-_ORCHESTRATOR_SECRETS = ("GITHUB_TOKEN", "TRELLO_API_KEY", "TRELLO_TOKEN")
+_ORCHESTRATOR_SECRETS = ("GITHUB_TOKEN", "TRELLO_API_KEY", "TRELLO_TOKEN", "ALERT_WEBHOOK_URL")
+
+# Kinds of alert lights-out can send (ALERT_EVENTS picks a subset).
+ALERT_EVENT_NAMES: tuple[str, ...] = ("failed", "pr_open", "needs_info", "budget", "lifecycle", "error")
 
 
 DEFAULT_HUMAN_REVIEW_PATHS: tuple[str, ...] = (
@@ -64,6 +67,20 @@ def parse_members(spec: str) -> list[str]:
 def parse_patterns(spec: str) -> list[str]:
     """Comma-separated glob patterns -> list, with blanks dropped."""
     return [p.strip() for p in spec.split(",") if p.strip()]
+
+
+def parse_alert_events(spec: str) -> list[str]:
+    """Comma-separated alert event names -> list (blank = all). Unknown names are a ConfigError."""
+    out: list[str] = []
+    for part in spec.split(","):
+        name = part.strip().lower()
+        if not name:
+            continue
+        if name not in ALERT_EVENT_NAMES:
+            raise ConfigError(f"Unknown ALERT_EVENTS name {name!r}; valid names: {', '.join(ALERT_EVENT_NAMES)}")
+        if name not in out:
+            out.append(name)
+    return out or list(ALERT_EVENT_NAMES)
 
 
 def _get(name: str, default: str | None = None, *, required: bool = False) -> str:
@@ -165,6 +182,10 @@ class Config:
     git_author_email: str = "lights-out@users.noreply.github.com"
     report_port: int = 8080
 
+    # Alerts: POST {"text": ...} to this URL (secret; empty = off) for the listed events
+    alert_webhook_url: str = field(default="", repr=False)
+    alert_events: list[str] = field(default_factory=lambda: list(ALERT_EVENT_NAMES))
+
     @property
     def workspaces_dir(self) -> Path:
         return self.data_dir / "workspaces"
@@ -230,6 +251,8 @@ class Config:
             git_author_name=_get("GIT_AUTHOR_NAME", "lights-out"),
             git_author_email=_get("GIT_AUTHOR_EMAIL", "lights-out@users.noreply.github.com"),
             report_port=int(_get("REPORT_PORT", "8080")),
+            alert_webhook_url=_get("ALERT_WEBHOOK_URL", "").strip(),
+            alert_events=parse_alert_events(_get("ALERT_EVENTS", "")),
         )
         if os.environ.get("GITHUB_REPO"):
             raise ConfigError(

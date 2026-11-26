@@ -190,7 +190,16 @@ TICKET = Ticket(
 )
 
 
-def make(cfg, origin, agents, github, ticket=TICKET, **pipe_kw):
+class FakeAlerter:
+    def __init__(self):
+        self.sent: list[tuple[str, str]] = []
+
+    def send(self, event, text):
+        self.sent.append((event, text))
+        return True
+
+
+def make(cfg, origin, agents, github, ticket=TICKET, alerter=None, **pipe_kw):
     trello = FakeTrello(ticket)
     store = Store(cfg.db_path)
     trello.repos = []  # repositories the pipeline asked GitHub / git for
@@ -211,6 +220,7 @@ def make(cfg, origin, agents, github, ticket=TICKET, **pipe_kw):
         store=store,
         agents_factory=lambda d, budget: agents,
         workspace_factory=workspace_factory,
+        alerter=alerter,
         **pipe_kw,
     )
     return pipe, trello, store
@@ -786,6 +796,61 @@ async def test_rebase_git_failure_aborts_and_fails_the_stage(cfg, origin, tmp_pa
     out = await pipe.process(TICKET, "d", budget_usd=10)
     assert out.status == "failed" and "boom" in out.error and "stage: rebase" in trello.comments[-1]
     assert not rebase_in_progress(cfg) and not gh.merged
+
+
+# --- alerts ------------------------------------------------------------------
+async def test_merged_card_sends_no_alert(cfg, origin):
+    alerter = FakeAlerter()
+    pipe, *_ = make(cfg, origin, FakeAgents(), FakeGitHub(), alerter=alerter)
+    assert (await pipe.process(TICKET, "n", budget_usd=10)).status == "merged"
+    assert alerter.sent == []
+
+
+async def test_failed_card_sends_one_failed_alert(cfg, origin):
+    alerter = FakeAlerter()
+    pipe, *_ = make(cfg, origin, FakeAgents(raise_budget=True), FakeGitHub(), alerter=alerter)
+    assert (await pipe.process(TICKET, "n", budget_usd=1)).status == "failed"
+    ((event, text),) = alerter.sent
+    assert event == "failed" and text.startswith("lights-out:")
+    assert "#12" in text and TICKET.title in text and TICKET.url in text and "stage" in text
+    assert "\n" not in text
+
+
+async def test_ci_failure_sends_pr_open_alert_with_reason_and_pr_url(cfg, origin):
+    cfg.max_ci_fix_attempts = 0
+    alerter = FakeAlerter()
+    pipe, *_ = make(cfg, origin, FakeAgents(), FakeGitHub("failure"), alerter=alerter)
+    assert (await pipe.process(TICKET, "n", budget_usd=10)).status == "pr_open"
+    ((event, text),) = alerter.sent
+    assert event == "pr_open" and text.startswith("lights-out:")
+    assert "CI failed" in text and "pull/7" in text and TICKET.url in text and "#12" in text
+
+
+async def test_human_approval_sends_pr_open_alert(cfg, origin):
+    alerter = FakeAlerter()
+    pipe, *_ = make(cfg, origin, MakefileAgents(), FakeGitHub("success"), alerter=alerter)
+    assert (await pipe.process(TICKET, "n", budget_usd=10)).status == "pr_open"
+    ((event, text),) = alerter.sent
+    assert event == "pr_open" and "needs human approval" in text and "pull/7" in text
+
+
+async def test_needs_info_sends_alert(cfg, origin):
+    alerter = FakeAlerter()
+    agents = FakeAgents(decision="needs_info")
+    pipe, *_ = make(cfg, origin, agents, FakeGitHub(), alerter=alerter)
+    assert (await pipe.process(TICKET, "n", budget_usd=10)).status == "needs_info"
+    ((event, text),) = alerter.sent
+    assert event == "needs_info" and text.startswith("lights-out:")
+    assert "#12" in text and TICKET.title in text and TICKET.url in text
+
+
+async def test_failure_after_pr_opened_includes_the_pr_url(cfg, origin):
+    alerter = FakeAlerter()
+    gh = FakeGitHub("success", merge_errors=[500])
+    pipe, *_ = make(cfg, origin, FakeAgents(), gh, alerter=alerter)
+    assert (await pipe.process(TICKET, "n", budget_usd=10)).status == "failed"
+    ((event, text),) = alerter.sent
+    assert event == "failed" and TICKET.url in text and "PR: https://github.com/o/r/pull/7" in text
 
 
 class RecordingHeartbeat(Heartbeat):

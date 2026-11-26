@@ -15,6 +15,7 @@ import json
 import logging
 import re
 import signal
+import sys
 import threading
 from collections.abc import Coroutine
 from datetime import datetime
@@ -22,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.config import Config
+from ..integrations.alerts import NullAlerter
 from ..integrations.trello import TrelloClient
 from ..reporting.report import TRANSCRIPT_RE, write_reports
 from ..reporting.store import Store
@@ -48,9 +50,12 @@ class Scheduler:
         store: Store,
         pipeline: Pipeline,
         heartbeat: Heartbeat | None = None,
+        alerter=None,
         *,
         pr_watcher: PRWatcher | None = None,
     ):
+        self.alerter = alerter or NullAlerter()
+        self._budget_alerted_day: str | None = None
         self.cfg = cfg
         self.pr_watcher = pr_watcher
         self.trello = trello
@@ -103,6 +108,13 @@ class Scheduler:
         left = self.budget_left(day)
         if left < 0.5:
             log.info("Daily budget of $%.2f reached; queued cards wait until tomorrow", self.cfg.max_day_usd)
+            if self._budget_alerted_day != day:
+                self._budget_alerted_day = day
+                self.alerter.send(
+                    "budget",
+                    f"lights-out: daily budget of ${self.cfg.max_day_usd:.2f} (MAX_DAY_USD) reached; "
+                    "queued cards wait until tomorrow.",
+                )
             return False
         card = self.next_card(day)
         if card is None:
@@ -124,19 +136,31 @@ class Scheduler:
         self.recover()
         write_reports(self.store, self.cfg.reports_dir, today(), runs_dir=self.cfg.runs_dir)
         log.info("Watching '%s' every %ds", self.cfg.lists.ready, self.cfg.poll_seconds)
-        while not self.stop.is_set():
-            try:
-                worked = await self.work_once()
-            except Exception:  # noqa: BLE001 - keep the watcher alive (e.g. a Trello outage)
-                log.exception("Watcher error")
-                worked = False
-            if not worked and self.pr_watcher is not None and not self.stop.is_set():
+        self.alerter.send("lifecycle", f"lights-out: service started, watching '{self.cfg.lists.ready}'.")
+        try:
+            while not self.stop.is_set():
                 try:
-                    self.pr_watcher.maybe_check()  # no card in progress: follow up on held PRs
-                except Exception:  # noqa: BLE001 - a follow-up problem must not stop the queue watcher
-                    log.exception("PR follow-up error")
-            if not worked and not self.stop.is_set():  # after finishing a card, check the queue again straight away
-                await asyncio.sleep(self.cfg.poll_seconds)
+                    worked = await self.work_once()
+                except Exception:  # noqa: BLE001 - keep the watcher alive (e.g. a Trello outage)
+                    log.exception("Watcher error")
+                    e = sys.exc_info()[1]
+                    lines = str(e).strip().splitlines()
+                    self.alerter.send(
+                        "error",
+                        f"lights-out: unexpected error in the scheduler loop: {type(e).__name__}: "
+                        f"{lines[0] if lines else ''}",
+                    )
+                    worked = False
+                if not worked and self.pr_watcher is not None and not self.stop.is_set():
+                    try:
+                        self.pr_watcher.maybe_check()  # no card in progress: follow up on held PRs
+                    except Exception:  # noqa: BLE001 - a follow-up problem must not stop the queue watcher
+                        log.exception("PR follow-up error")
+                if not worked and not self.stop.is_set():  # after a card, check the queue again straight away
+                    await asyncio.sleep(self.cfg.poll_seconds)
+        finally:
+            if self.stop.is_set():
+                self.alerter.send("lifecycle", "lights-out: service stopping (shutdown requested).")
 
 
 async def run_until_signal(

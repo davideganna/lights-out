@@ -156,11 +156,35 @@ in `REPO_LABELS` and `DEFAULT_REPO`:
    - `TRELLO_BOARD_ID`: the board whose *Queued* column drives the work.
 2. Build and check: `docker compose build && docker compose run --rm lights-out doctor`
    (`doctor` also checks the Claude credentials with a tiny real request, well under one cent)
+   If you set `ALERT_WEBHOOK_URL`, send a test message with `docker compose run --rm lights-out test-alert`.
 3. Create any missing board columns and repository labels: `docker compose run --rm lights-out setup-board`
 4. If a repository is empty, give it a first commit (CI workflow running `make check`, a Makefile
    and a `CLAUDE.md` with conventions): `docker compose run --rm lights-out bootstrap <label>`
 5. Start it: `docker compose up -d`. From then on, moving a card to **Queued** starts the agent.
    (`docker compose run --rm lights-out run-once` processes what's queued now and exits.)
+
+## Alerts
+
+Set `ALERT_WEBHOOK_URL` to be told when something needs you. lights-out sends `POST <url>` with the JSON
+body `{"text": "lights-out: ..."}` (Slack's incoming-webhook format). Examples:
+
+- Slack: `https://hooks.slack.com/services/...`
+- Discord: `https://discord.com/api/webhooks/<id>/<token>/slack` (note the `/slack` suffix)
+- Mattermost: `https://<host>/hooks/<id>`
+
+Every message starts with `lights-out:` and names the card (number, title, URL) and the PR when there is one.
+`ALERT_EVENTS` picks a comma-separated subset of the events (default: all; unknown names are a config error):
+
+- `failed`: a card failed, with the stage and the first line of the error
+- `pr_open`: a PR was opened but not merged (CI failed, CI timeout, no CI, needs human approval)
+- `needs_info`: a card was sent to Needs Info
+- `budget`: the daily budget (`MAX_DAY_USD`) is used up (once per day)
+- `lifecycle`: the service started or is stopping (`run` daemon only)
+- `error`: an unexpected exception in the scheduler loop
+
+`lights-out test-alert` sends one test message (ignoring `ALERT_EVENTS`) and says whether it worked;
+`doctor` only reports whether alerts are on. The URL is a secret: it is never logged or printed, and the
+coding agent never sees it. A failed alert is logged as a warning and never fails a card.
 
 ## Choosing the repository
 
