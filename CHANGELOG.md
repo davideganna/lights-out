@@ -19,6 +19,10 @@ All notable changes to lights-out are documented here. The format follows
   `current_card`, `stage`) with 200, or 503 when the last sign of life is older than `HEALTH_STALE_S`
   (default 900). The scheduler loop, stage changes, CI polls and running agent calls beat. The Docker image has
   a `HEALTHCHECK` that calls it.
+- Follow-up on held PRs: between cards, a watcher (every `PR_POLL_SECONDS`, default 120) checks each card whose
+  latest run is `pr_open`. PRs merged by hand move the card to Done (run `merged`), PRs closed without merging
+  move it to Failed. A `/lights-out merge` PR comment (or an approving review) from a user with write, maintain
+  or admin access, posted after the latest commit, merges the PR when CI is green; each command is acted on once.
 - The dashboard's run detail links each run's agent transcripts (opened in a new tab). The server serves them at
   `/runs/<run_id>/<file>` (strict name check, 404 otherwise) and `data.json` has a `transcripts` list per run.
 

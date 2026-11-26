@@ -71,6 +71,23 @@ later, a webhook can replace the poll.
   PR, CI wait, merge) run to the end instead; if that takes longer than the 30 s `stop_grace_period`
   (e.g. waiting for CI), Docker kills the process and the crash recovery above applies.
 
+### Merging held PRs
+
+A PR held for human approval (or left open after a CI problem) is followed up by lights-out. GitHub doesn't let
+an author approve their own PR and lights-out opens PRs with the owner's token, so approval is a comment:
+
+- Comment exactly `/lights-out merge` (surrounding whitespace is ignored) on the PR. It counts only if it was
+  posted after the PR's latest commit by a user with write, maintain or admin access to the repository.
+  Comments starting with lights-out's own marker never count.
+- An approving review from another user with write access (not the PR author) on the latest commit counts too.
+- CI on the latest commit must be green; otherwise lights-out replies on the PR with the reason and does not
+  merge. Post the command again once CI is green: each command is acted on only once.
+- On success the PR is squash-merged, the branch deleted and the card moved to Done. This overrides the
+  merge policy hold, since a human approved.
+- PRs merged by hand are synced (card to Done, run `merged`); PRs closed without merging move the card to Failed.
+
+The watcher runs only when no card is in progress, at most every `PR_POLL_SECONDS` (default 120).
+
 ## Monitoring
 
 The dashboard server answers `GET /healthz` with JSON:

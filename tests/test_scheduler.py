@@ -202,6 +202,47 @@ async def test_run_now_stops_after_signal_during_blocking_stage(setup):
     assert [r.card_short_id for r in store.day_runs(today())] == ["1"]
 
 
+class FakeWatcher:
+    def __init__(self, sched_stop=None, stop_after=1):
+        self.calls = 0
+        self.sched_stop = sched_stop
+        self.stop_after = stop_after
+
+    def maybe_check(self):
+        self.calls += 1
+        if self.sched_stop is not None and self.calls >= self.stop_after:
+            self.sched_stop.set()
+
+
+async def test_run_forever_calls_watcher_only_when_idle(setup):
+    sched, trello, store = setup([card(1)])
+    watcher = FakeWatcher()
+    sched.pr_watcher = watcher
+    sched.cfg.poll_seconds = 0
+    watcher.sched_stop = sched.stop
+    await sched.run_forever()
+    # card 1 was processed first (no watcher call), then the idle iteration called it
+    assert len(store.all_runs()) == 1
+    assert watcher.calls == 1
+
+
+class CrashingWatcher(FakeWatcher):
+    def maybe_check(self):
+        super().maybe_check()
+        if self.calls < self.stop_after:
+            raise RuntimeError("boom")
+
+
+async def test_run_forever_survives_a_crashing_watcher(setup):
+    sched, trello, store = setup([])
+    watcher = CrashingWatcher(stop_after=3)
+    sched.pr_watcher = watcher
+    sched.cfg.poll_seconds = 0
+    watcher.sched_stop = sched.stop
+    await sched.run_forever()  # the RuntimeError on the first two calls must not end the loop
+    assert watcher.calls == 3
+
+
 async def test_budget_alert_once_per_day(setup, monkeypatch):
     alerter = FakeAlerter()
     sched, trello, store = setup([card(1), card(2)], alerter=alerter, cost=9.8)

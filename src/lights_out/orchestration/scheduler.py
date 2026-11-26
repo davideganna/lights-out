@@ -27,6 +27,7 @@ from ..integrations.alerts import NullAlerter
 from ..integrations.trello import TrelloClient
 from ..reporting.report import TRANSCRIPT_RE, write_reports
 from ..reporting.store import Store
+from .followup import PRWatcher
 from .health import Heartbeat
 from .pipeline import Pipeline
 
@@ -50,10 +51,13 @@ class Scheduler:
         pipeline: Pipeline,
         heartbeat: Heartbeat | None = None,
         alerter=None,
+        *,
+        pr_watcher: PRWatcher | None = None,
     ):
         self.alerter = alerter or NullAlerter()
         self._budget_alerted_day: str | None = None
         self.cfg = cfg
+        self.pr_watcher = pr_watcher
         self.trello = trello
         self.store = store
         self.pipeline = pipeline
@@ -147,6 +151,11 @@ class Scheduler:
                         f"{lines[0] if lines else ''}",
                     )
                     worked = False
+                if not worked and self.pr_watcher is not None and not self.stop.is_set():
+                    try:
+                        self.pr_watcher.maybe_check()  # no card in progress: follow up on held PRs
+                    except Exception:  # noqa: BLE001 - a follow-up problem must not stop the queue watcher
+                        log.exception("PR follow-up error")
                 if not worked and not self.stop.is_set():  # after a card, check the queue again straight away
                     await asyncio.sleep(self.cfg.poll_seconds)
         finally:

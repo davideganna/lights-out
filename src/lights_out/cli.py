@@ -14,6 +14,7 @@ from .core.routing import Route
 from .integrations.alerts import Alerter
 from .integrations.github import GitHubClient
 from .integrations.trello import TrelloClient
+from .orchestration.followup import PRWatcher
 from .orchestration.health import Heartbeat
 from .orchestration.pipeline import Pipeline
 from .orchestration.scheduler import Scheduler, run_until_signal, serve_reports
@@ -49,7 +50,8 @@ def build(cfg: Config) -> tuple[TrelloClient, Store, Scheduler]:
         alerter=alerter,
         heartbeat=heartbeat,
     )
-    return trello, store, Scheduler(cfg, trello, store, pipeline, heartbeat, alerter=alerter)
+    watcher = PRWatcher(cfg, trello, store, lambda repo: GitHubClient(cfg.github_token, repo))
+    return trello, store, Scheduler(cfg, trello, store, pipeline, heartbeat, alerter=alerter, pr_watcher=watcher)
 
 
 def _targets(cfg: Config) -> list[tuple[str, str]]:

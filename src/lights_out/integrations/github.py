@@ -33,6 +33,22 @@ class PullRequest:
 
 
 @dataclass
+class PRState:
+    number: int
+    url: str
+    state: str  # open | closed
+    merged: bool
+    merged_by: str | None
+    author: str
+    head_sha: str
+    head_ref: str
+    title: str
+
+
+WRITE_ROLES = ("admin", "maintain", "write")
+
+
+@dataclass
 class BranchProtection:
     readable: bool = True  # False when GitHub answered 403 (token cannot read protection)
     protected: bool = False
@@ -94,6 +110,58 @@ class GitHubClient:
             existing.head_sha = head_sha
             return existing
         return self.create_pr(head=head, base=base, title=title, body=body)
+
+    def get_pr(self, number: int) -> PRState:
+        pr = self._req("GET", f"/repos/{self.repo}/pulls/{number}")
+        return PRState(
+            number=pr["number"],
+            url=pr["html_url"],
+            state=pr["state"],
+            merged=bool(pr.get("merged")),
+            merged_by=(pr.get("merged_by") or {}).get("login"),
+            author=(pr.get("user") or {}).get("login", ""),
+            head_sha=pr["head"]["sha"],
+            head_ref=pr["head"]["ref"],
+            title=pr["title"],
+        )
+
+    def head_commit_time(self, sha: str) -> str:
+        return self._req("GET", f"/repos/{self.repo}/commits/{sha}")["commit"]["committer"]["date"]
+
+    def issue_comments(self, number: int) -> list[dict]:
+        items = self._req("GET", f"/repos/{self.repo}/issues/{number}/comments", params={"per_page": 100})
+        return [
+            {
+                "id": c["id"],
+                "user": (c.get("user") or {}).get("login", ""),
+                "body": c.get("body") or "",
+                "created_at": c["created_at"],
+            }
+            for c in items or []
+        ]
+
+    def reviews(self, number: int) -> list[dict]:
+        items = self._req("GET", f"/repos/{self.repo}/pulls/{number}/reviews", params={"per_page": 100})
+        return [
+            {
+                "id": r["id"],
+                "user": (r.get("user") or {}).get("login", ""),
+                "state": r["state"],
+                "commit_id": r.get("commit_id", ""),
+                "submitted_at": r.get("submitted_at", ""),
+            }
+            for r in items or []
+        ]
+
+    def can_write(self, user: str) -> bool:
+        """True if the user has write, maintain or admin access (a 404 means no access)."""
+        try:
+            data = self._req("GET", f"/repos/{self.repo}/collaborators/{user}/permission")
+        except GitHubError as e:
+            if e.status == 404:
+                return False
+            raise
+        return data.get("permission") in WRITE_ROLES or data.get("role_name") in WRITE_ROLES
 
     def comment_pr(self, number: int, body: str) -> None:
         self._req("POST", f"/repos/{self.repo}/issues/{number}/comments", json={"body": body})
