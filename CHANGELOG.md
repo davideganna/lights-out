@@ -6,6 +6,12 @@ All notable changes to lights-out are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Dashboard redesign: dark-first theme (light still available), sticky top bar with live status, a
+  "Running now" strip for cards in progress, KPI tiles with icons and delta badges, Chart/Table switches,
+  status badges with SVG icons, an expandable runs table and a layout that fits phones. Still a single
+  self-contained page with no network assets.
+
 ### Added
 - Alerts: set `ALERT_WEBHOOK_URL` (Slack, Discord `/slack`, Mattermost) to get a `{"text": ...}` POST when a card
   fails, a PR is left open, a card goes to Needs Info, the daily budget is used up, the service starts or
