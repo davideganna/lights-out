@@ -7,6 +7,11 @@ All notable changes to lights-out are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Evaluation: `lights-out eval [--tasks ...] [--repeat N] [--out DIR] [--max-usd X]` runs the real pipeline (real
+  agents, real checks and review, no Trello or GitHub) on tasks in `eval/tasks/` against the sample repository
+  `eval/sample-repo/` (`ledger`), then runs hidden acceptance tests on the merged branch. It writes `results.json`
+  (outcome, check and acceptance results, cost, duration, fix and review rounds) and stops at `--max-usd`
+  (default 30). First tasks: `add-category-filter`, `fix-month-boundary`, `export-somewhere`.
 - Alerts: set `ALERT_WEBHOOK_URL` (Slack, Discord `/slack`, Mattermost) to get a `{"text": ...}` POST when a card
   fails, a PR is left open, a card goes to Needs Info, the daily budget is used up, the service starts or
   stops, or the scheduler loop hits an unexpected error. `ALERT_EVENTS` selects events, `lights-out test-alert`

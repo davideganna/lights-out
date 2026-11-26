@@ -222,8 +222,25 @@ them (`doctor` checks this).
 | `core/routing.py` | card label → repository |
 | `orchestration/pipeline.py` | one card end to end |
 | `orchestration/scheduler.py` | queue watcher (polls Queued), budgets, recovery, report server |
+| `eval/` (repo root) and `eval/` (in `src/lights_out/`) | sample repository, evaluation tasks and the `lights-out eval` runner |
 | `reporting/store.py` | SQLite run log and per-run stage timeline |
 | `reporting/report.py` / `templates/dashboard.html` | dashboard data (`data.json`) and the self-contained dashboard page |
+
+## Evaluation
+
+`lights-out eval` runs the real pipeline (real Claude agents, real `make check`, real review) on the sample tickets in
+`eval/tasks/` against a small sample repository (`eval/sample-repo/`), without Trello or GitHub. Afterwards it
+checks the merged result with acceptance tests the agents never saw. **It costs real money**: every task makes real
+Claude calls, and `--max-usd` (default 30) stops the run before a task starts once that much has been spent.
+
+```
+docker compose run --rm -v "$PWD/eval-results:/app/eval-results" lights-out eval [--tasks id1,id2] [--repeat N] [--out DIR] [--max-usd X]
+```
+
+Results go to `DIR/results.json` (default `eval-results/<UTC timestamp>/`), with a line per task on stdout. The eval
+database, workspaces and agent transcripts also live in `DIR`, never in `/data`. The exit code is 0 whenever the
+evaluation completes, whatever the pass rate. A task is a directory with `task.toml`, hidden `acceptance/` tests and an
+optional `setup.patch` (see the existing ones).
 
 ## Development
 

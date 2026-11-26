@@ -1,0 +1,21 @@
+diff --git a/src/ledger/reports.py b/src/ledger/reports.py
+index 7faa48f..a9439ff 100644
+--- a/src/ledger/reports.py
++++ b/src/ledger/reports.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++import datetime
+ from collections import defaultdict
+ from decimal import Decimal
+ 
+@@ -19,5 +20,7 @@ def totals_by_month(expenses: list[Expense]) -> dict[str, Decimal]:
+     """Totals per calendar month, keyed "YYYY-MM"."""
+     totals: dict[str, Decimal] = defaultdict(Decimal)
+     for e in expenses:
+-        totals[e.date.strftime("%Y-%m")] += e.amount
++        # A day counts toward the month it falls in; shift by a day to be safe at the edges.
++        shifted = e.date + datetime.timedelta(days=1)
++        totals[shifted.strftime("%Y-%m")] += e.amount
+     return dict(sorted(totals.items()))

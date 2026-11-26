@@ -17,6 +17,12 @@ COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 RUN pip install --no-cache-dir .
 
+# Evaluation (`lights-out eval`): the sample repository and tasks. The sample repo's checks need ruff and
+# pytest for the agent user; the hidden acceptance tests stay unreadable to it (root runs the orchestrator).
+COPY eval ./eval
+RUN pip install --no-cache-dir ruff pytest \
+ && chmod -R go-rwx /app/eval/tasks
+
 # Expose the Claude Code CLI bundled with the Agent SDK, and the wrapper that
 # drops privileges before starting it.
 RUN ln -s "$(python -c 'import claude_agent_sdk, os; print(os.path.dirname(claude_agent_sdk.__file__))')/_bundled/claude" /usr/local/bin/claude
