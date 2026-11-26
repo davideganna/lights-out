@@ -7,6 +7,11 @@ All notable changes to lights-out are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Revisions on request: a comment, line comment or review (comments or changes requested) on an open lights-out PR
+  from a user with write access, posted after the PR's latest commit, starts a revision run. The coder gets the
+  ticket, the current diff and the feedback in a fresh session; checks, review and delivery run as for a new
+  card (a held PR stays held), and lights-out replies on the PR with what changed. `MAX_PR_REVISIONS` (default 3)
+  caps revisions per PR; revisions count towards `MAX_DAY_USD` and the 3 attempts per card per day.
 - Alerts: set `ALERT_WEBHOOK_URL` (Slack, Discord `/slack`, Mattermost) to get a `{"text": ...}` POST when a card
   fails, a PR is left open, a card goes to Needs Info, the daily budget is used up, the service starts or
   stops, or the scheduler loop hits an unexpected error. `ALERT_EVENTS` selects events, `lights-out test-alert`

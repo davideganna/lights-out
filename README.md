@@ -88,6 +88,26 @@ an author approve their own PR and lights-out opens PRs with the owner's token, 
 
 The watcher runs only when no card is in progress, at most every `PR_POLL_SECONDS` (default 120).
 
+### Asking for changes on a lights-out PR
+
+To get a change on a PR lights-out opened, just say so on GitHub:
+
+- comment on the PR, leave comments on specific lines of the diff, or submit a review with comments or
+  changes requested (review bodies count; approvals alone don't).
+- Only feedback from users with write, maintain or admin access counts, posted after the PR's latest commit.
+  lights-out's own messages and the `/lights-out merge` command are never feedback; the command is checked
+  first, so a PR with an approval is merged rather than revised.
+
+lights-out then starts a revision run (it shows on the dashboard): the card moves to In Progress, a fresh coder
+session gets the ticket, the current diff and the feedback, and checks, review and delivery run as for a new
+card. A PR that is held for human approval stays held if the merge policy still requires it. When done,
+lights-out replies on the PR with a summary and the comments it addressed. Each comment triggers a revision
+only once. If a revision fails, the PR is left as it was and the error is posted on the PR and the card.
+
+`MAX_PR_REVISIONS` (default 3) limits revisions per PR; after that lights-out says on the PR that a human needs to
+take over and stops revising it. Revisions count towards `MAX_DAY_USD` and the 3 attempts per card per day;
+feedback that arrives when either limit is reached is picked up once it clears.
+
 ## Monitoring
 
 The dashboard server answers `GET /healthz` with JSON:

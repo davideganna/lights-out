@@ -147,10 +147,26 @@ class GitHubClient:
                 "id": r["id"],
                 "user": (r.get("user") or {}).get("login", ""),
                 "state": r["state"],
+                "body": r.get("body") or "",
                 "commit_id": r.get("commit_id", ""),
                 "submitted_at": r.get("submitted_at", ""),
             }
             for r in items or []
+        ]
+
+    def review_comments(self, number: int) -> list[dict]:
+        """Line comments left in reviews on the PR's diff."""
+        items = self._req("GET", f"/repos/{self.repo}/pulls/{number}/comments", params={"per_page": 100})
+        return [
+            {
+                "id": c["id"],
+                "user": (c.get("user") or {}).get("login", ""),
+                "body": c.get("body") or "",
+                "path": c.get("path"),
+                "line": c.get("line") or c.get("original_line"),
+                "created_at": c["created_at"],
+            }
+            for c in items or []
         ]
 
     def can_write(self, user: str) -> bool:

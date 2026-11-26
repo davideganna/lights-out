@@ -11,13 +11,13 @@ from pathlib import Path
 
 import pytest
 
-from lights_out.agents.agents import AgentResult, BudgetExceeded, ReviewResult, TriageResult
+from lights_out.agents.agents import AgentError, AgentResult, BudgetExceeded, ReviewResult, TriageResult
 from lights_out.core.config import Config
-from lights_out.core.models import Comment, Ticket
-from lights_out.integrations.github import GitHubError
+from lights_out.core.models import Comment, PRFeedback, Ticket
+from lights_out.integrations.github import GitHubError, PRState
 from lights_out.integrations.trello import queuing_member
 from lights_out.orchestration.health import Heartbeat
-from lights_out.orchestration.pipeline import Pipeline
+from lights_out.orchestration.pipeline import Pipeline, today
 from lights_out.orchestration.policy import merge_policy
 from lights_out.orchestration.scheduler import run_until_signal
 from lights_out.orchestration.workspace import Workspace, WorkspaceError
@@ -113,6 +113,7 @@ class FakeAgents:
     calls: list[str] = field(default_factory=list)
     seen_flags: list[list[str]] = field(default_factory=list)
     fix_messages: list[str] = field(default_factory=list)
+    fail_revise: bool = False
 
     async def triage(self, ticket, cwd):
         self.calls.append("triage")
@@ -127,6 +128,15 @@ class FakeAgents:
             (Path(cwd) / "feature.txt").write_text("broken" if self.broken_until_fix else "ok")
         self.spent_usd += 1.0
         return AgentResult("Added feature.txt", "s1", 1.0)
+
+    async def revise(self, ticket, diff, feedback, cwd):
+        self.calls.append("revise")
+        self.revise_args = (ticket, diff, feedback)
+        if self.fail_revise:
+            raise AgentError("coder crashed")
+        (Path(cwd) / "revised.txt").write_text("revised\n")
+        self.spent_usd += 0.7
+        return AgentResult("Renamed the thing", "s2", 0.7)
 
     async def follow_up(self, session_id, message, cwd):
         self.calls.append("fix")
@@ -898,3 +908,174 @@ async def test_ticker_beats_during_agent_call_and_stops_after(cfg, origin):
     after = hb.beats
     await asyncio.sleep(0.05)
     assert hb.beats == after
+
+
+# --- revising an open PR -------------------------------------------------------
+BRANCH = "agent/12-add-a-feature-file"
+
+
+def seed_pr_branch(origin: Path, tmp_path: Path) -> None:
+    seed = tmp_path / "seed-pr"
+    _git(tmp_path, "clone", str(origin), str(seed))
+    _git(seed, "checkout", "-b", BRANCH)
+    (seed / "feature.txt").write_text("ok")
+    _git(seed, "add", ".")
+    _git(seed, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "feature")
+    _git(seed, "push", "origin", f"HEAD:refs/heads/{BRANCH}")
+
+
+def pr_state(head_ref: str = BRANCH) -> PRState:
+    return PRState(
+        number=7,
+        url="https://github.com/o/r/pull/7",
+        state="open",
+        merged=False,
+        merged_by=None,
+        author="owner",
+        head_sha="abc",
+        head_ref=head_ref,
+        title="Add a feature file",
+    )
+
+
+def open_pr_run(store: Store, day: str = "2026-11-22") -> object:
+    rid = store.start(day=day, card_id="card1", card_short_id="12", title=TICKET.title, card_url=TICKET.url)
+    store.set_repo(rid, "o/app")
+    store.finish(rid, status="pr_open", cost_usd=1.0, pr_url="https://github.com/o/r/pull/7")
+    return next(r for r in store.all_runs() if r.id == rid)
+
+
+LINE_FB = PRFeedback("feedback-line", "99", "alice", "rename this", path="feature.txt", line=3)
+
+
+async def test_revision_pushes_replies_and_records(cfg, origin, tmp_path):
+    seed_pr_branch(origin, tmp_path)
+    agents, gh = FakeAgents(), FakeGitHub("success")
+    pipe, trello, store = make(cfg, origin, agents, gh)
+    day = today()
+    run = open_pr_run(store, day)
+    before = store.attempts("card1", day)
+    out = await pipe.revise(run, pr_state(), [LINE_FB])
+    assert out.status == "merged", out.error  # no policy hold configured by default for these paths
+    assert agents.calls == ["revise", "review"]
+    assert branch_file(origin, BRANCH, "revised.txt") == "revised\n"
+    ticket, diff, feedback = agents.revise_args
+    assert "@alice (feature.txt:3): rename this" in feedback and "feature.txt" in diff
+    assert gh.prs[0]["head"] == BRANCH
+    assert "started a revision" in gh.pr_comments[0][1] and "@alice (feature.txt:3)" in gh.pr_comments[0][1]
+    final = gh.pr_comments[-1][1]
+    assert "revised this PR" in final and "Renamed the thing" in final and "rename this" in final
+    assert any("started a revision" in c for c in trello.comments)
+    new = store.all_runs()[-1]
+    assert new.id != run.id and new.pr_url and new.repo == "o/app"
+    assert new.cost_usd == pytest.approx(0.7)
+    assert store.attempts("card1", day) == before + 1
+    assert store.revision_count("o/app", 7) == 1
+    assert store.is_handled("o/app", "feedback-line", "99")
+    assert trello.moves[0] == "In Progress"
+    assert len(store.all_runs()) == 2 and before == 1
+
+
+async def test_revision_reviewer_sees_the_feedback(cfg, origin, tmp_path):
+    seed_pr_branch(origin, tmp_path)
+    seen = []
+
+    class Spy(FakeAgents):
+        async def review(self, ticket, diff, cwd, risk_flags=None):
+            seen.append(ticket.description)
+            return await super().review(ticket, diff, cwd, risk_flags)
+
+    pipe, _, store = make(cfg, origin, Spy(), FakeGitHub())
+    await pipe.revise(open_pr_run(store), pr_state(), [LINE_FB])
+    assert "## Maintainer feedback on the PR" in seen[0] and "rename this" in seen[0]
+    assert TICKET.description == "Please."  # the stored ticket is untouched
+
+
+async def test_held_pr_stays_held_after_revision(cfg, origin, tmp_path):
+    seed_pr_branch(origin, tmp_path)
+    cfg.human_review_paths = ["revised.txt"]
+    gh = FakeGitHub("success")
+    pipe, trello, store = make(cfg, origin, FakeAgents(), gh)
+    out = await pipe.revise(open_pr_run(store), pr_state(), [LINE_FB])
+    assert out.status == "pr_open" and not gh.merged
+    assert "needs human approval" in out.error
+    assert "revised this PR" in gh.pr_comments[-1][1]
+    assert store.all_runs()[-1].status == "pr_open" and store.all_runs()[-1].pr_url
+
+
+async def test_revision_uses_the_pr_branch_not_the_title(cfg, origin, tmp_path):
+    seed_pr_branch(origin, tmp_path)
+    gh = FakeGitHub("success")
+    pipe, _, store = make(cfg, origin, FakeAgents(), gh)
+    other = Ticket(**{**TICKET.__dict__, "title": "A new title"})
+    pipe.trello.ticket = other
+    out = await pipe.revise(open_pr_run(store), pr_state(), [LINE_FB])
+    assert out.status == "merged" and gh.prs[0]["head"] == BRANCH
+    assert branch_file(origin, BRANCH, "revised.txt") == "revised\n"
+
+
+async def test_failed_revision_leaves_the_pr_open(cfg, origin, tmp_path):
+    seed_pr_branch(origin, tmp_path)
+    alerter = FakeAlerter()
+    gh = FakeGitHub("success")
+    pipe, trello, store = make(cfg, origin, FakeAgents(fail_revise=True), gh, alerter=alerter)
+    out = await pipe.revise(open_pr_run(store), pr_state(), [LINE_FB])
+    assert out.status == "failed" and "coder crashed" in out.error
+    last = store.all_runs()[-1]
+    assert last.status == "pr_open" and "coder crashed" in last.error and last.pr_url
+    assert "coder crashed" in gh.pr_comments[-1][1] and "coder crashed" in trello.comments[-1]
+    assert trello.moves[-1] == "PR Opened"
+    assert [e for e, _ in alerter.sent] == ["failed"]
+    assert store.is_handled("o/app", "feedback-line", "99")  # not retried in a loop
+    assert not gh.merged
+
+
+async def test_revision_of_a_missing_branch_fails_cleanly(cfg, origin):
+    gh = FakeGitHub("success")
+    pipe, trello, store = make(cfg, origin, FakeAgents(), gh)
+    out = await pipe.revise(open_pr_run(store), pr_state("agent/gone"), [LINE_FB])
+    assert out.status == "failed" and "does not exist" in out.error
+    assert store.all_runs()[-1].status == "pr_open"
+
+
+def test_prepare_existing_checks_out_the_remote_branch(cfg, origin, tmp_path):
+    seed_pr_branch(origin, tmp_path)
+    ws = Workspace(cfg.workspaces_dir / "w", repo_url=str(origin), base_branch="main", github_token="")
+    ws.prepare_existing(BRANCH)
+    assert (ws.path / "feature.txt").read_text() == "ok"
+    assert ws.git("rev-parse", "--abbrev-ref", "HEAD").strip() == BRANCH
+    with pytest.raises(WorkspaceError):
+        ws.prepare_existing("agent/nope")
+
+
+async def test_cancelled_revision_is_recorded_and_reraised(cfg, origin, tmp_path):
+    seed_pr_branch(origin, tmp_path)
+
+    class Cancelling(FakeAgents):
+        async def revise(self, ticket, diff, feedback, cwd):
+            raise asyncio.CancelledError
+
+    gh = FakeGitHub("success")
+    pipe, trello, store = make(cfg, origin, Cancelling(), gh)
+    with pytest.raises(asyncio.CancelledError):
+        await pipe.revise(open_pr_run(store), pr_state(), [LINE_FB])
+    last = store.all_runs()[-1]
+    assert last.status == "pr_open" and "shutdown" in last.error
+    assert "shutdown" in gh.pr_comments[-1][1]
+
+
+async def test_unexpected_error_in_a_revision_still_finishes_the_run(cfg, origin, tmp_path):
+    seed_pr_branch(origin, tmp_path)
+
+    class Broken(FakeAgents):
+        async def revise(self, ticket, diff, feedback, cwd):
+            raise RuntimeError("something unexpected")
+
+    gh = FakeGitHub("success")
+    pipe, trello, store = make(cfg, origin, Broken(), gh)
+    out = await pipe.revise(open_pr_run(store), pr_state(), [LINE_FB])
+    assert out.status == "failed"
+    last = store.all_runs()[-1]
+    assert last.status == "pr_open" and "something unexpected" in last.error
+    assert store.running() == []
+    assert "something unexpected" in gh.pr_comments[-1][1]
