@@ -4,23 +4,27 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
+import httpx
+
 from ..agents import prompts
-from ..agents.agents import AgentError, AgentsProtocol, BudgetExceeded
+from ..agents.agents import AgentError, AgentsProtocol, BudgetExceeded, ReviewResult
 from ..agents.risk import find_risk_flags, format_risk_flags
 from ..core.config import Config
-from ..core.models import Ticket
+from ..core.models import PRFeedback, Ticket
 from ..core.routing import Route, RoutingError, resolve
 from ..integrations.alerts import NullAlerter
-from ..integrations.github import GitHubClient, GitHubError
-from ..integrations.trello import TrelloClient
+from ..integrations.github import GitHubClient, GitHubError, PRState
+from ..integrations.trello import TrelloClient, TrelloError
 from ..reporting.report import write_reports
-from ..reporting.store import Store
+from ..reporting.store import Run, Store
 from .health import AGENT_BEAT_S, Heartbeat
 from .policy import merge_policy
 from .workspace import EmptyRepositoryError, Workspace, WorkspaceError
@@ -29,6 +33,13 @@ log = logging.getLogger(__name__)
 
 BOT = "🤖 **lights-out**"
 MAX_REBASES = 2
+# A card that fails is moved out of Queued; if a human queues it again the same
+# day it is retried, but not more than this many times (protects the budget).
+MAX_ATTEMPTS_PER_DAY = 3
+
+
+def today() -> str:
+    return datetime.now().date().isoformat()
 
 
 def _first_line(text: str) -> str:
@@ -115,9 +126,7 @@ class Pipeline:
                         f"queued by @{who}" if who else "queued by an unknown member"
                     )
                     return self._send_back(ticket, run_id, agents.spent_usd, reason, [])
-                ticket.comments = [
-                    c for c in ticket.comments if c.username.lower() in allowed or c.username.lower() == me
-                ]
+                self._filter_comments(ticket, me)
             try:
                 route = resolve(ticket, self.cfg.repo_labels, self.cfg.default_repo)
             except RoutingError as e:
@@ -146,28 +155,7 @@ class Pipeline:
             if not ws.has_changes():
                 raise StageFailed("implement", "The agent finished without changing any files.")
 
-            for round_no in range(self.cfg.max_review_rounds + 1):
-                set_stage(f"review {round_no + 1}")
-                self._move(ticket.id, lists.reviewing)
-                # Scan the untruncated diff so padding can't hide a deletion from the flags.
-                flags = find_risk_flags(ws.diff_vs_base(limit=10**9))
-                review = await agents.review(ticket, ws.diff_vs_base(), ws.path, risk_flags=flags)
-                if review.approved:
-                    break
-                issues = "\n".join(f"- {i}" for i in review.issues) or review.summary
-                if round_no == self.cfg.max_review_rounds:
-                    raise StageFailed(
-                        "review",
-                        f"The reviewer still requested changes after {self.cfg.max_review_rounds} revision rounds.",
-                        issues,
-                    )
-                set_stage(f"revise {round_no + 1}")
-                self._move(ticket.id, lists.in_progress)
-                fix = await agents.follow_up(
-                    session, prompts.FIX_REVIEW.format(issues=issues, check_command=self.cfg.check_command), ws.path
-                )
-                session, summary = fix.session_id, fix.text
-                session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage)
+            session, summary, review, flags = await self._review_loop(agents, ws, ticket, session, summary, set_stage)
 
             set_stage("deliver")
             return await self._deliver(
@@ -241,6 +229,166 @@ class Pipeline:
             self.heartbeat.clear_work()
             if ws is not None:
                 ws.kill_agent_processes()
+
+    def _filter_comments(self, ticket: Ticket, me: str) -> None:
+        allowed = self.cfg.allowed_members
+        ticket.comments = [c for c in ticket.comments if c.username.lower() in allowed or c.username.lower() == me]
+
+    async def _review_loop(
+        self,
+        agents: AgentsProtocol,
+        ws: Workspace,
+        ticket: Ticket,
+        session: str,
+        summary: str,
+        set_stage: Callable[[str], None],
+    ) -> tuple[str, str, ReviewResult, list[str]]:
+        """Review the diff, sending the coder back with the issues until approved. Returns the final state."""
+        lists = self.cfg.lists
+        for round_no in range(self.cfg.max_review_rounds + 1):
+            set_stage(f"review {round_no + 1}")
+            self._move(ticket.id, lists.reviewing)
+            # Scan the untruncated diff so padding can't hide a deletion from the flags.
+            flags = find_risk_flags(ws.diff_vs_base(limit=10**9))
+            review = await agents.review(ticket, ws.diff_vs_base(), ws.path, risk_flags=flags)
+            if review.approved:
+                break
+            issues = "\n".join(f"- {i}" for i in review.issues) or review.summary
+            if round_no == self.cfg.max_review_rounds:
+                raise StageFailed(
+                    "review",
+                    f"The reviewer still requested changes after {self.cfg.max_review_rounds} revision rounds.",
+                    issues,
+                )
+            set_stage(f"revise {round_no + 1}")
+            self._move(ticket.id, lists.in_progress)
+            fix = await agents.follow_up(
+                session, prompts.FIX_REVIEW.format(issues=issues, check_command=self.cfg.check_command), ws.path
+            )
+            session, summary = fix.session_id, fix.text
+            session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage)
+        return session, summary, review, flags
+
+    async def revise(self, run: Run, pr: PRState, feedback: list[PRFeedback]) -> Outcome:
+        """Revise an open PR after a maintainer asked for changes. Returns the outcome; never raises
+        except to propagate cancellation."""
+        lists = self.cfg.lists
+        day = today()
+        budget = min(self.cfg.max_ticket_usd, self.cfg.max_day_usd - self.store.day_cost(day))
+        run_id = self.store.start(
+            day=day,
+            card_id=run.card_id,
+            card_short_id=run.card_short_id,
+            title=run.title,
+            card_url=run.card_url,
+            settings=json.dumps(self.cfg.run_settings()),
+        )
+        self.store.set_repo(run_id, run.repo)
+        self.store.add_revision(run.repo, pr.number, run_id)
+        for f in feedback:  # before any agent work, so a crash can't loop
+            self.store.mark_handled(run.repo, f.kind, f.id, run_id)
+        self.heartbeat.set_work(run.card_short_id, "start")
+        agents = self.agents_factory(self.cfg.runs_dir / str(run_id), budget)
+        ws: Workspace | None = None
+        stage = "start"
+        feedback_md = "\n".join(f"- {f.quote()}" for f in feedback)
+
+        def set_stage(name: str) -> None:
+            nonlocal stage
+            stage = name
+            self.heartbeat.set_work(run.card_short_id, name)
+            self.store.stage(run_id, name, agents.spent_usd)
+            self._refresh_dashboard()
+            log.info("[#%s] %s", run.card_short_id, name)
+
+        ticker = asyncio.create_task(self._tick())
+        try:
+            ticket = self.trello.get_ticket(run.card_id)
+            if self.cfg.allowed_members:
+                self._filter_comments(ticket, self.trello.me())
+            github = self.github_factory(run.repo)
+            started = f"{BOT} started a revision (run #{run_id}) after this feedback:\n\n{feedback_md}"
+            self.trello.comment(run.card_id, started)
+            github.comment_pr(pr.number, started)
+            self._move(run.card_id, lists.in_progress)
+
+            set_stage("workspace")
+            ws = self.workspace_factory(ticket, Route(label="", repo=run.repo))
+            ws.prepare_existing(pr.head_ref)
+
+            set_stage("implement")
+            impl = await agents.revise(ticket, ws.diff_vs_base(), feedback_md, ws.path)
+            session, summary = impl.session_id, impl.text
+            session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage)
+
+            # Without the feedback the reviewer would reject changes only the maintainer asked for.
+            reviewed = dataclasses.replace(
+                ticket, description=f"{ticket.description}\n\n## Maintainer feedback on the PR\n{feedback_md}"
+            )
+            session, summary, review, flags = await self._review_loop(agents, ws, reviewed, session, summary, set_stage)
+
+            set_stage("deliver")
+            outcome = await self._deliver(
+                ticket,
+                ws,
+                github,
+                run_id,
+                agents,
+                session,
+                set_stage,
+                summary,
+                review.summary,
+                "Revision requested on the PR:\n\n" + feedback_md,
+                flags,
+                branch=pr.head_ref,
+            )
+            if outcome.status in ("pr_open", "merged"):
+                github.comment_pr(
+                    pr.number,
+                    f"{BOT} revised this PR (run #{run_id}).\n\nAddressed:\n\n{feedback_md}\n\n{outcome.summary}",
+                )
+            return outcome
+        except asyncio.CancelledError:
+            # Service shutting down: record the run and tell the PR, then keep unwinding.
+            msg = f"Interrupted during stage '{stage}' (shutdown)."
+            self._revision_failed(run, pr, run_id, agents.spent_usd, stage, msg)
+            raise
+        except Exception as e:
+            if isinstance(e, StageFailed):
+                stage_name, detail = e.stage, e.detail
+            else:
+                stage_name, detail = stage, ""
+                if not isinstance(e, (AgentError, WorkspaceError, GitHubError, TrelloError)):
+                    log.exception("[#%s] unexpected error during revision", run.card_short_id)
+            msg = f"{e}" + (f"\n\n{detail}" if detail else "")
+            self._revision_failed(run, pr, run_id, agents.spent_usd, stage_name, msg)
+            self.alerter.send(
+                "failed",
+                f'lights-out: revision of card #{run.card_short_id} "{run.title}" failed at stage '
+                f"{stage_name}: {_first_line(str(e))} — {run.card_url} PR: {pr.url}",
+            )
+            return Outcome("failed", error=msg)
+        finally:
+            ticker.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await ticker
+            self.heartbeat.clear_work()
+            if ws is not None:
+                ws.kill_agent_processes()
+
+    def _revision_failed(self, run: Run, pr: PRState, run_id: int, cost: float, stage: str, msg: str) -> None:
+        """Report a failed revision on the card and the PR; the PR stays open and the watcher keeps following it."""
+        text = (
+            f"{BOT} couldn't revise this PR (run #{run_id}, stage: {stage}).\n\n{msg}\n\n"
+            "The branch may already have been updated before this failed; a human needs to take a look."
+        )
+        try:
+            self.trello.comment(run.card_id, text)
+            self._move(run.card_id, self.cfg.lists.pr_opened)
+            self.github_factory(run.repo).comment_pr(pr.number, text)
+        except (TrelloError, GitHubError, httpx.HTTPError):
+            log.exception("[#%s] could not report the failed revision", run.card_short_id)
+        self.store.finish(run_id, status="pr_open", pr_url=pr.url, error=msg[:4000], cost_usd=cost)
 
     async def _tick(self) -> None:
         """Keep the heartbeat alive while long agent calls are awaited."""
@@ -321,8 +469,10 @@ class Pipeline:
         plan: str,
         risk_flags: list[str],
         on_pr: Callable[[str], None] = lambda url: None,
+        branch: str | None = None,
     ) -> Outcome:
         lists, cfg = self.cfg.lists, self.cfg
+        branch = branch or ticket.branch
         ci_fixes = 0
         rebases = 0
         merge_retry_used = False
@@ -330,7 +480,7 @@ class Pipeline:
             ws.kill_agent_processes()
             ws.commit(f"{ticket.title} (#{ticket.short_id})\n\nTrello: {ticket.url}")
             reasons = merge_policy(ws.changed_files(), cfg)
-            sha = ws.push(ticket.branch)
+            sha = ws.push(branch)
             approval = "## Needs human approval\n" + "".join(f"- {r}\n" for r in reasons) + "\n" if reasons else ""
             footer = (
                 "_Opened by lights-out. Needs human approval before merging._"
@@ -345,7 +495,7 @@ class Pipeline:
                 f"{footer}"
             )
             pr = github.open_or_update_pr(
-                head=ticket.branch, base=cfg.base_branch, title=ticket.title, body=body, head_sha=sha
+                head=branch, base=cfg.base_branch, title=ticket.title, body=body, head_sha=sha
             )
             on_pr(pr.url)
             self._move(ticket.id, lists.pr_opened)
@@ -391,7 +541,7 @@ class Pipeline:
                         )
                         continue
                     raise
-                github.delete_branch(ticket.branch)
+                github.delete_branch(branch)
                 self.trello.comment(ticket.id, f"{BOT} implemented and merged this: {pr.url}\n\n{summary}")
                 self.trello.move(ticket.id, lists.done)
                 self.store.finish(run_id, status="merged", cost_usd=cost, summary=summary, pr_url=pr.url)

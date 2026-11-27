@@ -128,6 +128,7 @@ class AgentsProtocol(Protocol):
 
     async def triage(self, ticket: Ticket, cwd: Path) -> TriageResult: ...
     async def implement(self, ticket: Ticket, plan: str, cwd: Path) -> AgentResult: ...
+    async def revise(self, ticket: Ticket, diff: str, feedback: str, cwd: Path) -> AgentResult: ...
     async def follow_up(self, session_id: str, message: str, cwd: Path) -> AgentResult: ...
     async def review(
         self, ticket: Ticket, diff: str, cwd: Path, *, risk_flags: list[str] | None = None
@@ -252,6 +253,19 @@ class ClaudeAgents:
         )
         prompt = prompts.CODER_TASK.format(ticket=ticket.as_prompt(), plan=plan, check_command=cmd)
         return await self._run("implement", prompt, opts)
+
+    async def revise(self, ticket: Ticket, diff: str, feedback: str, cwd: Path) -> AgentResult:
+        cmd = self.cfg.check_command
+        opts = self._options(
+            model=self.cfg.coder_model,
+            cwd=cwd,
+            tools=CODER_TOOLS,
+            append=prompts.CODER_SYSTEM_APPEND.format(check_command=cmd),
+            max_turns=self.cfg.coder_max_turns,
+            effort=self.cfg.coder_effort or None,
+        )
+        prompt = prompts.REVISE_PR.format(ticket=ticket.as_prompt(), diff=diff, feedback=feedback, check_command=cmd)
+        return await self._run("revise", prompt, opts)
 
     async def follow_up(self, session_id: str, message: str, cwd: Path) -> AgentResult:
         cmd = self.cfg.check_command

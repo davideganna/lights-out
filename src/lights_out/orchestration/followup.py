@@ -6,17 +6,18 @@ import logging
 import re
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 import httpx
 
 from ..core.config import Config
+from ..core.models import PRFeedback
 from ..integrations.alerts import NullAlerter
 from ..integrations.github import GitHubClient, GitHubError, PRState
 from ..integrations.trello import TrelloClient, TrelloError
 from ..reporting.report import write_reports
 from ..reporting.store import Run, Store
-from .pipeline import BOT
+from .pipeline import BOT, MAX_ATTEMPTS_PER_DAY, Outcome, today
 
 log = logging.getLogger(__name__)
 
@@ -35,9 +36,11 @@ class PRWatcher:
         store: Store,
         github_factory: Callable[[str], GitHubClient],
         clock: Callable[[], float] = time.monotonic,
+        revise: Callable[[Run, PRState, list[PRFeedback]], Awaitable[Outcome]] | None = None,
         *,
         alerter=None,
     ):
+        self.revise = revise
         self.alerter = alerter or NullAlerter()
         self.cfg = cfg
         self.trello = trello
@@ -45,24 +48,25 @@ class PRWatcher:
         self.github_factory = github_factory
         self.clock = clock
         self._last: float | None = None
+        self._revised = False
 
-    def maybe_check(self) -> None:
+    async def maybe_check(self) -> None:
         if self.cfg.pr_poll_seconds <= 0 or self.store.running():
             return
         now = self.clock()
         if self._last is not None and now - self._last < self.cfg.pr_poll_seconds:
             return
         self._last = now
-        self.check_all()
+        await self.check_all()
 
-    def check_now(self) -> None:
+    async def check_now(self) -> None:
         """Startup check: don't wait for the interval."""
         if self.cfg.pr_poll_seconds <= 0:
             return
         self._last = self.clock()
-        self.check_all()
+        await self.check_all()
 
-    def check_all(self) -> None:
+    async def check_all(self) -> None:
         allowed = set(self.cfg.repo_labels.values())
         if self.cfg.default_repo:
             allowed.add(self.cfg.default_repo)
@@ -74,7 +78,11 @@ class PRWatcher:
             if not m:
                 continue
             try:
-                changed = self._check(run, int(m.group(1))) or changed
+                self._revised = False
+                if await self._check(run, int(m.group(1))):
+                    changed = True
+                if self._revised:
+                    break  # a revision ran agents: stop here so the queue gets a turn
             except FOLLOWUP_ERRORS:  # one bad PR must not stop the others
                 log.exception("Could not follow up on %s", run.pr_url)
         if changed:
@@ -95,7 +103,7 @@ class PRWatcher:
             return
         self._move(card_id, target)
 
-    def _check(self, run: Run, n: int) -> bool:
+    async def _check(self, run: Run, n: int) -> bool:
         """Returns True if the run changed."""
         lists = self.cfg.lists
         gh = self.github_factory(run.repo)
@@ -121,7 +129,7 @@ class PRWatcher:
                 f"{run.card_url} PR: {run.pr_url}",
             )
             return True
-        return self._check_open(run, gh, pr)
+        return await self._check_open(run, gh, pr)
 
     def _find_approval(self, run: Run, gh: GitHubClient, pr: PRState) -> tuple[str, str, str] | None:
         """(kind, item id, user) of the first unhandled approval, or None."""
@@ -146,10 +154,79 @@ class PRWatcher:
                 return "review", str(r["id"]), r["user"]
         return None
 
-    def _check_open(self, run: Run, gh: GitHubClient, pr: PRState) -> bool:
+    def _collect_feedback(self, run: Run, gh: GitHubClient, pr: PRState) -> list[PRFeedback]:
+        """Unhandled feedback from writers posted after the PR's latest commit."""
+        t = gh.head_commit_time(pr.head_sha)
+        candidates: list[PRFeedback] = []
+        for c in gh.issue_comments(pr.number):
+            if c["created_at"] > t:
+                candidates.append(
+                    PRFeedback("feedback-comment", str(c["id"]), c["user"], c["body"], at=c["created_at"])
+                )
+        for c in gh.review_comments(pr.number):
+            if c["created_at"] > t:
+                candidates.append(
+                    PRFeedback(
+                        "feedback-line",
+                        str(c["id"]),
+                        c["user"],
+                        c["body"],
+                        c.get("path"),
+                        c.get("line"),
+                        c["created_at"],
+                    )
+                )
+        for r in gh.reviews(pr.number):
+            if r["state"] in ("CHANGES_REQUESTED", "COMMENTED") and r["submitted_at"] > t:
+                candidates.append(
+                    PRFeedback("feedback-review", str(r["id"]), r["user"], r["body"], at=r["submitted_at"])
+                )
+        writers: dict[str, bool] = {}
+        out: list[PRFeedback] = []
+        for f in candidates:
+            body = f.body.strip()
+            if not body or body.startswith(BOT) or body == COMMAND:
+                continue
+            if self.store.is_handled(run.repo, f.kind, f.id):
+                continue
+            if f.user not in writers:
+                writers[f.user] = gh.can_write(f.user)
+            if writers[f.user]:
+                out.append(f)
+        out.sort(key=lambda f: f.at)
+        return out
+
+    async def _check_open(self, run: Run, gh: GitHubClient, pr: PRState) -> bool:
         found = self._find_approval(run, gh, pr)
         if found is None:
-            return False
+            if self.revise is None:
+                return False
+            feedback = self._collect_feedback(run, gh, pr)
+            if not feedback:
+                return False
+            n = pr.number
+            if self.store.revision_count(run.repo, n) >= self.cfg.max_pr_revisions:
+                if not self.store.is_handled(run.repo, "revision-limit", str(n)):
+                    gh.comment_pr(
+                        n,
+                        f"{BOT} has already revised this PR {self.cfg.max_pr_revisions} times "
+                        f"(MAX_PR_REVISIONS), so a human needs to take over.",
+                    )
+                    self.store.mark_handled(run.repo, "revision-limit", str(n), run.id)
+                return False
+            day = today()
+            left = self.cfg.max_day_usd - self.store.day_cost(day)
+            if left < 0.5:
+                log.info("Daily budget reached; not revising %s until tomorrow", pr.url)
+                return False
+            if self.store.attempts(run.card_id, day) >= MAX_ATTEMPTS_PER_DAY:
+                log.info(
+                    "Card #%s already attempted %d times today; not revising", run.card_short_id, MAX_ATTEMPTS_PER_DAY
+                )
+                return False
+            await self.revise(run, pr, feedback)
+            self._revised = True
+            return True
         kind, item_id, user = found
         self.store.mark_handled(run.repo, kind, item_id, run.id)
         state, failed = gh.ci_status(pr.head_sha)

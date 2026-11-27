@@ -127,6 +127,14 @@ class Workspace:
         self.git("checkout", "-B", ticket.branch)
         self._hand_to_agent()
 
+    def prepare_existing(self, branch: str) -> None:
+        """Check out an existing branch of origin (a PR to revise)."""
+        self.clone()
+        if not self.git("rev-parse", "--verify", f"origin/{branch}", check=False).strip():
+            raise WorkspaceError(f"Branch {branch!r} does not exist on origin.")
+        self.git("checkout", "-B", branch, f"origin/{branch}")
+        self._hand_to_agent()
+
     def run_check(self, command: str, timeout_s: int) -> CheckResult:
         self._hand_to_agent()
         env = {**os.environ, "CI": "true"}

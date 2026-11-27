@@ -51,7 +51,9 @@ def build(cfg: Config) -> tuple[TrelloClient, Store, Scheduler]:
         alerter=alerter,
         heartbeat=heartbeat,
     )
-    watcher = PRWatcher(cfg, trello, store, lambda repo: GitHubClient(cfg.github_token, repo), alerter=alerter)
+    watcher = PRWatcher(
+        cfg, trello, store, lambda repo: GitHubClient(cfg.github_token, repo), revise=pipeline.revise, alerter=alerter
+    )
     return trello, store, Scheduler(cfg, trello, store, pipeline, heartbeat, alerter=alerter, pr_watcher=watcher)
 
 

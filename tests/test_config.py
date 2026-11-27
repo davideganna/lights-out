@@ -67,3 +67,9 @@ def test_invalid_value_is_a_config_error(env, name, value):
 def test_whitespace_is_stripped(env):
     env.setenv("CODER_EFFORT", " max ")
     assert load().coder_effort == "max"
+
+
+def test_max_pr_revisions_default_and_override(env, monkeypatch):
+    assert load().max_pr_revisions == 3
+    monkeypatch.setenv("MAX_PR_REVISIONS", "5")
+    assert load().max_pr_revisions == 5

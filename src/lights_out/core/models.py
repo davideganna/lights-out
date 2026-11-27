@@ -15,6 +15,25 @@ class Comment:
 
 
 @dataclass
+class PRFeedback:
+    """A human comment on a PR that asks for changes."""
+
+    kind: str  # feedback-comment | feedback-review | feedback-line
+    id: str
+    user: str
+    body: str
+    path: str | None = None
+    line: int | None = None
+    at: str = ""
+
+    def quote(self) -> str:
+        where = ""
+        if self.path:
+            where = f" ({self.path}:{self.line})" if self.line else f" ({self.path})"
+        return f"@{self.user}{where}: {self.body.strip()}"
+
+
+@dataclass
 class Ticket:
     id: str
     short_id: str

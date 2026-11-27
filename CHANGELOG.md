@@ -13,6 +13,11 @@ All notable changes to lights-out are documented here. The format follows
   self-contained page with no network assets.
 
 ### Added
+- Revisions on request: a comment, line comment or review (comments or changes requested) on an open lights-out PR
+  from a user with write access, posted after the PR's latest commit, starts a revision run. The coder gets the
+  ticket, the current diff and the feedback in a fresh session; checks, review and delivery run as for a new
+  card (a held PR stays held), and lights-out replies on the PR with what changed. `MAX_PR_REVISIONS` (default 3)
+  caps revisions per PR; revisions count towards `MAX_DAY_USD` and the 3 attempts per card per day.
 - Ten more eval tasks: 8 that should be sent back for more information (3 ambiguous, 2 too large, 2 not
   actionable, 1 self-contradictory) and 2 near-miss tasks that look vague but should proceed
   (`sort-list-by-date`, `list-total-line`). Tasks may carry an optional `solution.patch` reference solution, which

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import signal
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pytest
 
@@ -39,6 +39,16 @@ class FakePipeline:
     trello: FakeTrello
     cost: float = 1.0
     leave_in_queue: bool = False
+    pr_comments: list = field(default_factory=list)
+
+    def github_factory(self, repo):
+        pipe = self
+
+        class GH:
+            def comment_pr(self, number, body):
+                pipe.pr_comments.append((repo, number, body))
+
+        return GH()
 
     async def process(self, card, day, budget_usd):
         rid = self.store.start(
@@ -135,6 +145,20 @@ async def test_recover_requeues_interrupted_runs(setup):
     assert store.day_runs(today())[0].status == "interrupted"
 
 
+async def test_recover_keeps_an_interrupted_revision_on_its_open_pr(setup):
+    sched, trello, store = setup([])
+    rid = store.start(day=today(), card_id="c9", card_short_id="9", title="t", card_url="u")
+    store.set_repo(rid, "o/app")
+    store.add_revision("o/app", 7, rid)
+    sched.recover()
+    run = store.day_runs(today())[0]
+    assert run.status == "pr_open" and run.pr_url == "https://github.com/o/app/pull/7"
+    assert "Interrupted" in run.error
+    assert trello.moves == [("c9", "PR Opened")]  # not back to Queued: it must not be re-run from scratch
+    assert sched.pipeline.pr_comments and sched.pipeline.pr_comments[0][:2] == ("o/app", 7)
+    assert [r.id for r in store.open_prs()] == [rid]  # the watcher keeps following the PR
+
+
 async def test_run_until_signal_stops_on_sigterm_and_restores_handler():
     before = signal.getsignal(signal.SIGTERM)
     asyncio.get_running_loop().call_later(0.01, signal.raise_signal, signal.SIGTERM)
@@ -210,12 +234,12 @@ class FakeWatcher:
         self.sched_stop = sched_stop
         self.stop_after = stop_after
 
-    def check_now(self):
+    async def check_now(self):
         self.now_calls += 1
         if self.on_now:
             self.on_now()
 
-    def maybe_check(self):
+    async def maybe_check(self):
         self.calls += 1
         if self.sched_stop is not None and self.calls >= self.stop_after:
             self.sched_stop.set()
@@ -234,8 +258,8 @@ async def test_run_forever_calls_watcher_only_when_idle(setup):
 
 
 class CrashingWatcher(FakeWatcher):
-    def maybe_check(self):
-        super().maybe_check()
+    async def maybe_check(self):
+        await super().maybe_check()
         if self.calls < self.stop_after:
             raise RuntimeError("boom")
 
