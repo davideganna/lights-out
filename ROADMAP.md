@@ -31,7 +31,7 @@ The phases are in priority order. Each item is a candidate ticket.
       currently give orders to an agent with merge rights)
 - [x] Merge policy: auto-merge small or low-risk changes; require human approval when the diff touches
       CI, dependencies, auth, migrations, or is large. Configurable per repository (global settings for
-      now; per-repository with `lights-out.yaml`)
+      now; per-repository with `lights-out.yaml`) (per-repository: done)
 - [ ] Network egress allow-list for the container (GitHub, Anthropic, package registries)
 - [x] Reviewer hardening: flag changes that weaken tests or CI as blocking
 

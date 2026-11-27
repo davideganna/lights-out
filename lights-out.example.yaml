@@ -6,6 +6,16 @@
 # Which repository a card is about is set by its label: label: owner/repo.
 repos:
   my-app: your-org/my-app
+  # A mapping sets `repo:` plus per-repository overrides. Allowed keys: base_branch, check_command,
+  # check_timeout_s, ci_timeout_s, human_review_paths, max_auto_merge_lines, max_ticket_usd, merge_without_ci.
+  # web:
+  #   repo: acme/web
+  #   base_branch: develop
+  #   check_command: npm run check
+  #   human_review_paths: ["migrations/**", ".github/**"]
+  #   max_auto_merge_lines: 200
+  #   merge_without_ci: false
+  #   check_timeout_s: 1800
 # Trello column names; set a stage list to "" to skip it.
 lists:
   ready: Queued

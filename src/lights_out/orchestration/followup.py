@@ -230,7 +230,7 @@ class PRWatcher:
         kind, item_id, user = found
         self.store.mark_handled(run.repo, kind, item_id, run.id)
         state, failed = gh.ci_status(pr.head_sha)
-        if not (state == "success" or (state == "none" and self.cfg.merge_without_ci)):
+        if not (state == "success" or (state == "none" and self.cfg.for_repo(run.repo).merge_without_ci)):
             names = f" (failed: {', '.join(failed)})" if failed else ""
             gh.comment_pr(
                 pr.number,

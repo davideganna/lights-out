@@ -40,6 +40,7 @@ class FakePipeline:
     cost: float = 1.0
     leave_in_queue: bool = False
     pr_comments: list = field(default_factory=list)
+    budgets: list = field(default_factory=list)
 
     def github_factory(self, repo):
         pipe = self
@@ -51,6 +52,7 @@ class FakePipeline:
         return GH()
 
     async def process(self, card, day, budget_usd):
+        self.budgets.append(budget_usd)
         rid = self.store.start(
             day=day, card_id=card.id, card_short_id=card.short_id, title=card.title, card_url=card.url
         )
@@ -369,3 +371,10 @@ async def test_failing_startup_pr_check_does_not_stop_the_scheduler(setup):
     watcher.sched_stop = sched2.stop
     await sched2.run_forever()
     assert watcher.now_calls == 2
+
+
+async def test_scheduler_passes_the_remaining_daily_budget(setup):
+    sched, trello, store = setup([card(1), card(2)], cost=4.0)
+    assert await sched.work_once()
+    assert await sched.work_once()
+    assert sched.pipeline.budgets == [10.0, 6.0]

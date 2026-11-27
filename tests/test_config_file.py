@@ -220,7 +220,7 @@ def test_config_command_bad_file_exits_2(env, tmp_path, capsys):
 
 def test_effective_settings_covers_every_field(env):
     keys = {k for k, _, _ in effective_settings({})}
-    expected = {f.name for f in fields(Config)} - {"repo_labels", "lists"} | {"repos"}
+    expected = {f.name for f in fields(Config)} - {"repo_labels", "repo_overrides", "lists"} | {"repos"}
     expected = {k for k in expected if k not in FILE_SECRET_KEYS}
     assert expected <= keys
 
@@ -237,6 +237,7 @@ def test_example_file(env):
     for f in fields(Config):
         if f.name in FILE_SECRET_KEYS or f.name in (
             "repo_labels",
+            "repo_overrides",
             "trello_board_id",
             "default_repo",
             "data_dir",
@@ -246,3 +247,122 @@ def test_example_file(env):
         assert getattr(cfg, f.name) == getattr(default, f.name), f.name
     assert cfg.human_review_paths == list(DEFAULT_HUMAN_REVIEW_PATHS)
     assert cfg.repo_labels == {"my-app": "your-org/my-app"}
+
+
+# --- per-repository overrides ---------------------------------------------------------------------
+REPOS_FILE = {
+    "repos": {
+        "lights-out": "davideganna/lights-out",
+        "web": {
+            "repo": "acme/web",
+            "base_branch": "develop",
+            "check_command": "npm run check",
+            "human_review_paths": ["migrations/**"],
+            "max_auto_merge_lines": 200,
+            "merge_without_ci": True,
+            "check_timeout_s": 1800,
+            "max_ticket_usd": 3,
+        },
+    }
+}
+
+
+def test_parses_both_repo_forms(env, tmp_path):
+    write(env, tmp_path, REPOS_FILE)
+    cfg = load()
+    assert cfg.repo_labels == {"lights-out": "davideganna/lights-out", "web": "acme/web"}
+    assert cfg.repo_overrides == {
+        "acme/web": {
+            "base_branch": "develop",
+            "check_command": "npm run check",
+            "human_review_paths": ["migrations/**"],
+            "max_auto_merge_lines": 200,
+            "merge_without_ci": True,
+            "check_timeout_s": 1800,
+            "max_ticket_usd": 3.0,
+        }
+    }
+
+
+def test_forbidden_override_key(env, tmp_path):
+    write(env, tmp_path, {"repos": {"web": {"repo": "acme/web", "poll_seconds": 1}}})
+    with pytest.raises(ConfigError) as e:
+        load()
+    assert "web" in str(e.value) and "acme/web" in str(e.value) and "base_branch" in str(e.value)
+
+
+@pytest.mark.parametrize(
+    "entry, needle",
+    [
+        ({"base_branch": "x"}, "repo"),
+        ({"repo": "nope", "base_branch": "x"}, "repo"),
+        ({"repo": "a/b", "check_timeout_s": "soon"}, "check_timeout_s"),
+        ({"repo": "a/b", "merge_without_ci": "yes"}, "merge_without_ci"),
+    ],
+)
+def test_bad_override_entries(env, tmp_path, entry, needle):
+    write(env, tmp_path, {"repos": {"web": entry}})
+    with pytest.raises(ConfigError, match=needle):
+        load()
+
+
+def test_same_repo_with_overrides_twice(env, tmp_path):
+    entry = {"repo": "a/b", "base_branch": "x"}
+    write(env, tmp_path, {"repos": {"one": entry, "two": dict(entry)}})
+    with pytest.raises(ConfigError, match="more than once"):
+        load()
+
+
+def test_for_repo(env, tmp_path):
+    write(env, tmp_path, REPOS_FILE)
+    cfg = load()
+    before = list(cfg.human_review_paths)
+    web = cfg.for_repo("acme/web")
+    assert web.base_branch == "develop" and web.check_command == "npm run check"
+    assert web.human_review_paths == ["migrations/**"] and web.merge_without_ci is True
+    assert web.max_ticket_usd == 3.0
+    web.human_review_paths.append("x")
+    assert cfg.base_branch == "main" and cfg.check_command == "make check"
+    assert cfg.human_review_paths == before and cfg.merge_without_ci is False
+    assert cfg.repo_overrides["acme/web"]["human_review_paths"] == ["migrations/**"]
+    assert cfg.for_repo("davideganna/lights-out") is cfg
+    assert cfg.for_repo("unknown/repo") is cfg
+
+
+def test_repo_labels_env_wins_and_warns(env, tmp_path, capsys):
+    write(env, tmp_path, REPOS_FILE)
+    env.setenv("REPO_LABELS", "web=acme/web")
+    cfg = load()
+    assert cfg.repo_overrides == {} and cfg.for_repo("acme/web").base_branch == "main"
+    assert main(["config"]) == 0
+    cap = capsys.readouterr()
+    assert "Warning: REPO_LABELS is set" in cap.err and "conf.yaml" in cap.err
+    assert "repos.web." not in cap.out
+
+
+def test_config_shows_overrides_without_warning(env, tmp_path, capsys):
+    write(env, tmp_path, REPOS_FILE)
+    assert main(["config"]) == 0
+    cap = capsys.readouterr()
+    assert "repos.web.base_branch = develop  [file]" in cap.out
+    assert "repos.web.human_review_paths = migrations/**  [file]" in cap.out
+    assert "repos.web.merge_without_ci = true  [file]" in cap.out
+    assert "repos = lights-out=davideganna/lights-out,web=acme/web  [file]" in cap.out
+    assert cap.err == ""
+
+
+def test_env_labels_without_file_overrides_do_not_warn(env, tmp_path, capsys):
+    write(env, tmp_path, {"repos": {"web": "acme/web"}})
+    env.setenv("REPO_LABELS", "web=acme/web")
+    assert main(["config"]) == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_cli_workspace_uses_repo_base_branch(env, tmp_path):
+    from lights_out.cli import _workspace
+    from lights_out.core.routing import Route
+
+    write(env, tmp_path, REPOS_FILE)
+    cfg = load()
+    assert _workspace(cfg, "x", Route("web", "acme/web")).base_branch == "develop"
+    assert _workspace(cfg, "y", Route("lights-out", "davideganna/lights-out")).base_branch == "main"

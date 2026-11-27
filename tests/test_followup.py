@@ -587,3 +587,24 @@ async def test_check_now_runs_immediately_then_interval_applies(env):
     env.now = 10
     await env.watcher.maybe_check()
     assert len(env.gh.requests) == n
+
+
+async def test_merge_without_ci_override_lets_the_command_merge(env):
+    env.cfg.repo_overrides = {"o/app": {"merge_without_ci": True}}
+    rid = env.seed()
+    env.gh.checks = []
+    env.gh.perms["alice"] = {"permission": "write", "role_name": "write"}
+    env.gh.comments = [comment(10, "alice")]
+    await env.watcher.check_all()
+    assert env.gh.calls("PUT") == ["/pulls/7/merge"]
+    assert env.run(rid).status == "merged"
+
+
+async def test_command_without_ci_does_not_merge_by_default(env):
+    rid = env.seed()
+    env.gh.checks = []
+    env.gh.perms["alice"] = {"permission": "write", "role_name": "write"}
+    env.gh.comments = [comment(10, "alice")]
+    await env.watcher.check_all()
+    assert env.gh.calls("PUT") == []
+    assert env.run(rid).status == "pr_open"
