@@ -16,6 +16,8 @@ def env(monkeypatch, tmp_path):
         monkeypatch.setenv(k, "x")
     monkeypatch.setenv("DEFAULT_REPO", "o/r")
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("LIGHTS_OUT_CONFIG", raising=False)
+    monkeypatch.chdir(tmp_path)
     for k in VARS + ["PLANNER_MODEL", "CODER_MODEL", "REVIEWER_MODEL"]:
         monkeypatch.delenv(k, raising=False)
     return monkeypatch

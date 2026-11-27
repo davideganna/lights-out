@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field, fields
 from pathlib import Path
+from typing import TypeGuard
 
-from .routing import parse_repo_labels
+import yaml
+
+from .routing import is_repo, parse_repo_labels
 
 # Secrets the orchestrator needs but the coding agent must never see. They are
 # removed from os.environ after loading, because the Claude Code subprocess
@@ -90,11 +94,14 @@ def _get(name: str, default: str | None = None, *, required: bool = False) -> st
     return value or ""
 
 
-def _effort(name: str, default: str) -> str:
-    value = _get(name, default).strip()
+def _check_effort(name: str, value: str) -> str:
     if value and value not in EFFORT_LEVELS:
         raise ConfigError(f"{name} must be one of low, medium, high, xhigh, max or empty, got {value!r}")
     return value
+
+
+def _effort(name: str, default: str) -> str:
+    return _check_effort(name, _get(name, default).strip())
 
 
 @dataclass
@@ -213,48 +220,23 @@ class Config:
 
     @classmethod
     def from_env(cls, *, scrub_secrets: bool = True) -> Config:
+        env = os.environ
+        values = {k: v for k, (v, _src) in _resolve(env).items()}
+        for name in ("TRELLO_API_KEY", "TRELLO_TOKEN", "GITHUB_TOKEN"):
+            _get(name, required=True)
+        if not values["trello_board_id"]:
+            raise ConfigError(
+                "Missing required environment variable TRELLO_BOARD_ID (or trello_board_id in lights-out.yaml)"
+            )
+        simple = {k: v for k, v in values.items() if k not in ("repos",) and not k.startswith("lists.")}
         cfg = cls(
-            trello_api_key=_get("TRELLO_API_KEY", required=True),
-            trello_token=_get("TRELLO_TOKEN", required=True),
-            trello_board_id=_get("TRELLO_BOARD_ID", required=True),
-            github_token=_get("GITHUB_TOKEN", required=True),
-            repo_labels=_repo_labels(_get("REPO_LABELS", "")),
-            allowed_members=parse_members(_get("ALLOWED_MEMBERS", "")),
-            default_repo=_get("DEFAULT_REPO", ""),
-            base_branch=_get("BASE_BRANCH", "main"),
-            lists=Lists(
-                **{name: os.environ.get(f"LIST_{name.upper()}", default) for name, default in Lists().__dict__.items()}
-            ),
-            planner_model=_get("PLANNER_MODEL", "claude-opus-5-5"),
-            coder_model=_get("CODER_MODEL", "claude-sonnet-5-5"),
-            reviewer_model=_get("REVIEWER_MODEL", "claude-opus-5-5"),
-            planner_effort=_effort("PLANNER_EFFORT", "high"),
-            coder_effort=_effort("CODER_EFFORT", ""),
-            reviewer_effort=_effort("REVIEWER_EFFORT", "high"),
-            max_ticket_usd=float(_get("MAX_TICKET_USD", "10")),
-            max_day_usd=float(_get("MAX_DAY_USD", "50")),
-            max_fix_attempts=int(_get("MAX_FIX_ATTEMPTS", "3")),
-            max_ci_fix_attempts=int(_get("MAX_CI_FIX_ATTEMPTS", "2")),
-            max_review_rounds=int(_get("MAX_REVIEW_ROUNDS", "2")),
-            max_pr_revisions=int(_get("MAX_PR_REVISIONS", "3")),
-            coder_max_turns=int(_get("CODER_MAX_TURNS", "150")),
-            check_command=_get("CHECK_COMMAND", "make check"),
-            check_timeout_s=int(_get("CHECK_TIMEOUT_S", "1200")),
-            ci_timeout_s=int(_get("CI_TIMEOUT_S", "1800")),
-            ci_grace_s=int(_get("CI_GRACE_S", "180")),
-            merge_without_ci=_get("MERGE_WITHOUT_CI", "false").lower() == "true",
-            human_review_paths=parse_patterns(_get("HUMAN_REVIEW_PATHS", ",".join(DEFAULT_HUMAN_REVIEW_PATHS))),
-            max_auto_merge_lines=int(_get("MAX_AUTO_MERGE_LINES", "400")),
-            poll_seconds=int(_get("POLL_SECONDS", "15")),
-            health_stale_s=int(_get("HEALTH_STALE_S", "900")),
-            pr_poll_seconds=int(_get("PR_POLL_SECONDS", "120")),
-            data_dir=Path(_get("DATA_DIR", "/data")),
-            agent_user=_get("AGENT_USER", ""),
-            git_author_name=_get("GIT_AUTHOR_NAME", "lights-out"),
-            git_author_email=_get("GIT_AUTHOR_EMAIL", "lights-out@users.noreply.github.com"),
-            report_port=int(_get("REPORT_PORT", "8080")),
-            alert_webhook_url=_get("ALERT_WEBHOOK_URL", "").strip(),
-            alert_events=parse_alert_events(_get("ALERT_EVENTS", "")),
+            trello_api_key=_get("TRELLO_API_KEY"),
+            trello_token=_get("TRELLO_TOKEN"),
+            github_token=_get("GITHUB_TOKEN"),
+            repo_labels=values["repos"],
+            lists=Lists(**{n: values[f"lists.{n}"] for n in Lists().__dict__}),
+            alert_webhook_url=_get("ALERT_WEBHOOK_URL").strip(),
+            **simple,
         )
         if os.environ.get("GITHUB_REPO"):
             raise ConfigError(
@@ -262,7 +244,10 @@ class Config:
                 "and the optional DEFAULT_REPO. Update your .env."
             )
         if not cfg.repo_labels and not cfg.default_repo:
-            raise ConfigError("Set REPO_LABELS (label=owner/repo, comma-separated) so cards can be routed")
+            raise ConfigError(
+                "Set REPO_LABELS (label=owner/repo, comma-separated) or `repos:` in lights-out.yaml "
+                "so cards can be routed"
+            )
         if cfg.default_repo and "/" not in cfg.default_repo:
             raise ConfigError("DEFAULT_REPO must look like 'owner/name'")
         if scrub_secrets:
@@ -271,3 +256,217 @@ class Config:
         for d in (cfg.workspaces_dir, cfg.reports_dir, cfg.runs_dir):
             d.mkdir(parents=True, exist_ok=True)
         return cfg
+
+
+# --- Configuration file (lights-out.yaml) -------------------------------------------------------
+
+DEFAULT_CONFIG_FILE = "lights-out.yaml"
+FILE_SECRET_KEYS = (
+    "github_token",
+    "trello_api_key",
+    "trello_token",
+    "alert_webhook_url",
+    "claude_code_oauth_token",
+    "anthropic_api_key",
+)
+
+# (key, default, kind) for every non-secret setting except `lists` and `repos`. The environment
+# variable is key.upper().
+_SETTINGS: tuple[tuple[str, object, str], ...] = (
+    ("trello_board_id", "", "str"),
+    ("allowed_members", [], "members"),
+    ("default_repo", "", "str"),
+    ("base_branch", "main", "str"),
+    ("planner_model", "claude-opus-5-5", "str"),
+    ("coder_model", "claude-sonnet-5-5", "str"),
+    ("reviewer_model", "claude-opus-5-5", "str"),
+    ("planner_effort", "high", "effort"),
+    ("coder_effort", "", "effort"),
+    ("reviewer_effort", "high", "effort"),
+    ("max_ticket_usd", 10.0, "float"),
+    ("max_day_usd", 50.0, "float"),
+    ("max_fix_attempts", 3, "int"),
+    ("max_ci_fix_attempts", 2, "int"),
+    ("max_review_rounds", 2, "int"),
+    ("max_pr_revisions", 3, "int"),
+    ("coder_max_turns", 150, "int"),
+    ("check_command", "make check", "str"),
+    ("check_timeout_s", 1200, "int"),
+    ("ci_timeout_s", 1800, "int"),
+    ("ci_grace_s", 180, "int"),
+    ("merge_without_ci", False, "bool"),
+    ("human_review_paths", list(DEFAULT_HUMAN_REVIEW_PATHS), "patterns"),
+    ("max_auto_merge_lines", 400, "int"),
+    ("poll_seconds", 15, "int"),
+    ("health_stale_s", 900, "int"),
+    ("pr_poll_seconds", 120, "int"),
+    ("data_dir", Path("/data"), "path"),
+    ("agent_user", "", "str"),
+    ("git_author_name", "lights-out", "str"),
+    ("git_author_email", "lights-out@users.noreply.github.com", "str"),
+    ("report_port", 8080, "int"),
+    ("alert_events", list(ALERT_EVENT_NAMES), "events"),
+)
+
+_DISPLAY_SECRETS = (
+    "GITHUB_TOKEN",
+    "TRELLO_API_KEY",
+    "TRELLO_TOKEN",
+    "ALERT_WEBHOOK_URL",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+)
+
+
+def valid_file_keys() -> list[str]:
+    """Top-level keys allowed in the file, derived from the Config fields."""
+    skip = set(FILE_SECRET_KEYS) | {"repo_labels"}
+    return sorted({f.name for f in fields(Config) if f.name not in skip} | {"repos"})
+
+
+def load_config_file(env: Mapping[str, str]) -> tuple[dict, Path | None]:
+    """Read and validate the optional YAML file. Returns ({}, None) when the default file is absent."""
+    explicit = env.get("LIGHTS_OUT_CONFIG", "")
+    path = Path(explicit or DEFAULT_CONFIG_FILE)
+    if not path.is_file():
+        if explicit:
+            raise ConfigError(f"LIGHTS_OUT_CONFIG points to {path}, which does not exist")
+        return {}, None
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (yaml.YAMLError, OSError, UnicodeDecodeError) as e:
+        raise ConfigError(f"Cannot read {path}: {e}") from e
+    if data is None:
+        return {}, path
+    if not isinstance(data, dict):
+        raise ConfigError(f"{path} must contain a mapping of settings at the top level")
+    valid = valid_file_keys()
+    for key in data:
+        if str(key).lower() in FILE_SECRET_KEYS:
+            raise ConfigError(f"{key} is a secret; move it to .env as {str(key).upper()}")
+        if key not in valid:
+            raise ConfigError(f"Unknown key {key!r} in {path}; valid keys: {', '.join(valid)}")
+    lists = data.get("lists")
+    if lists is not None:
+        if not isinstance(lists, dict):
+            raise ConfigError(f"lists in {path} must be a mapping, got {lists!r}")
+        names = sorted(Lists().__dict__)
+        for sub in lists:
+            if sub not in names:
+                raise ConfigError(f"Unknown key 'lists.{sub}' in {path}; valid keys: {', '.join(names)}")
+    return data, path
+
+
+def _bad_type(key: str, path: Path | None, expected: str, value: object) -> ConfigError:
+    return ConfigError(f"{key} in {path} must be {expected}, got {value!r}")
+
+
+def _from_file(key: str, kind: str, value: object, path: Path | None) -> object:
+    def is_str_list(v: object) -> TypeGuard[list[str]]:
+        return isinstance(v, list) and all(isinstance(i, str) for i in v)
+
+    if kind in ("str", "path", "effort"):
+        if not isinstance(value, str):
+            raise _bad_type(key, path, "text", value)
+        if kind == "path":
+            return Path(value)
+        if kind == "effort":
+            return _check_effort(key.upper(), value.strip())
+        return value
+    if kind == "int":
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise _bad_type(key, path, "an integer", value)
+        return value
+    if kind == "float":
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise _bad_type(key, path, "a number", value)
+        return float(value)
+    if kind == "bool":
+        if not isinstance(value, bool):
+            raise _bad_type(key, path, "true or false", value)
+        return value
+    if kind in ("members", "patterns", "events"):
+        if not is_str_list(value):
+            raise _bad_type(key, path, "a list of text values", value)
+        joined = ",".join(value)
+        if kind == "members":
+            return parse_members(joined)
+        if kind == "events":
+            return parse_alert_events(joined)
+        return [p.strip() for p in value if p.strip()]
+    if kind == "repos":
+        if not isinstance(value, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in value.items()):
+            raise _bad_type(key, path, "a mapping of label to owner/repo", value)
+        out: dict[str, str] = {}
+        for label, repo in value.items():
+            name, repo = label.strip().lower(), repo.strip()
+            if not name or not is_repo(repo):
+                raise ConfigError(f"repos entry {label!r}: {repo!r} in {path} must look like 'label: owner/repo'")
+            if name in out:
+                raise ConfigError(f"repos in {path} lists the label {label!r} twice")
+            out[name] = repo
+        return out
+    raise AssertionError(kind)
+
+
+def _from_env(name: str, kind: str, raw: str) -> object:
+    if kind == "str":
+        return raw
+    if kind == "path":
+        return Path(raw)
+    if kind == "effort":
+        return _check_effort(name, raw.strip())
+    if kind == "int":
+        return int(raw)
+    if kind == "float":
+        return float(raw)
+    if kind == "bool":
+        return raw.lower() == "true"
+    if kind == "members":
+        return parse_members(raw)
+    if kind == "patterns":
+        return parse_patterns(raw)
+    if kind == "events":
+        return parse_alert_events(raw)
+    if kind == "repos":
+        return _repo_labels(raw)
+    raise AssertionError(kind)
+
+
+def _resolve(env: Mapping[str, str]) -> dict[str, tuple[object, str]]:
+    """Value and source ("env", "file" or "default") for every non-secret setting."""
+    data, path = load_config_file(env)
+    table: list[tuple[str, str, object, str]] = [(k, k.upper(), d, kind) for k, d, kind in _SETTINGS]
+    table.append(("repos", "REPO_LABELS", {}, "repos"))
+    file_lists = data.get("lists") or {}
+    for name, default in Lists().__dict__.items():
+        table.append((f"lists.{name}", f"LIST_{name.upper()}", default, "str"))
+    out: dict[str, tuple[object, str]] = {}
+    for key, var, default, kind in table:
+        file_value = file_lists.get(key[6:]) if key.startswith("lists.") else data.get(key)
+        has_file = (key[6:] in file_lists) if key.startswith("lists.") else key in data
+        if var in env:
+            out[key] = (_from_env(var, kind, env[var]), "env")
+        elif has_file and file_value is not None:
+            out[key] = (_from_file(key, kind, file_value, path), "file")
+        else:
+            out[key] = (list(default) if isinstance(default, list) else default, "default")
+    return out
+
+
+def effective_settings(env: Mapping[str, str] | None = None) -> list[tuple[str, str, str]]:
+    """(key, display value, source) for every setting; secrets only as set / not set."""
+    env = os.environ if env is None else env
+    rows: list[tuple[str, str, str]] = []
+    for key, (value, source) in _resolve(env).items():
+        if isinstance(value, dict):
+            text = ",".join(f"{k}={v}" for k, v in value.items())
+        elif isinstance(value, list):
+            text = ",".join(value)
+        else:
+            text = str(value).lower() if isinstance(value, bool) else str(value)
+        rows.append((key, text, source))
+    for name in _DISPLAY_SECRETS:
+        is_set = bool(env.get(name))
+        rows.append((name.lower(), "set" if is_set else "not set", "env" if is_set else "default"))
+    return rows

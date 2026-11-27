@@ -1,0 +1,87 @@
+# lights-out.yaml: every non-secret setting with its default. Copy to lights-out.yaml and edit.
+# An environment variable (e.g. in .env) overrides the file. Secrets (tokens, API keys, webhook URL)
+# never go here; keep them in .env.
+
+# --- Trello and repositories
+# Which repository a card is about is set by its label: label: owner/repo.
+repos:
+  my-app: your-org/my-app
+# Trello column names; set a stage list to "" to skip it.
+lists:
+  ready: Queued
+  triaged: Triaged
+  in_progress: In Progress
+  verifying: Verifying
+  reviewing: Reviewing
+  pr_opened: PR Opened
+  needs_info: Needs Info
+  failed: Failed
+  done: Done
+trello_board_id: ''
+default_repo: ''
+base_branch: main
+allowed_members: []
+
+# --- Models
+planner_model: claude-opus-5-5
+coder_model: claude-sonnet-5-5
+reviewer_model: claude-opus-5-5
+planner_effort: high
+coder_effort: ''
+reviewer_effort: high
+
+# --- Limits and checks
+max_ticket_usd: 10.0
+max_day_usd: 50.0
+max_fix_attempts: 3
+max_ci_fix_attempts: 2
+max_review_rounds: 2
+max_pr_revisions: 3
+coder_max_turns: 150
+check_command: make check
+check_timeout_s: 1200
+ci_timeout_s: 1800
+ci_grace_s: 180
+merge_without_ci: false
+max_auto_merge_lines: 400
+human_review_paths:
+- .github/**
+- Dockerfile*
+- docker/**
+- Makefile
+- pyproject.toml
+- requirements*.txt
+- setup.py
+- setup.cfg
+- package.json
+- package-lock.json
+- yarn.lock
+- pnpm-lock.yaml
+- go.mod
+- go.sum
+- Cargo.toml
+- Cargo.lock
+- '**/migrations/**'
+- '**/auth/**'
+- '**/*auth*.py'
+
+# --- Queue watching
+poll_seconds: 15
+health_stale_s: 900
+pr_poll_seconds: 120
+
+# --- Runtime (in the Docker image DATA_DIR and AGENT_USER are set by the Dockerfile, so the environment overrides these two)
+data_dir: /data
+agent_user: ''
+git_author_name: lights-out
+git_author_email: lights-out@users.noreply.github.com
+report_port: 8080
+
+# --- Alerts (the webhook URL is a secret and stays in .env)
+alert_events:
+- failed
+- pr_open
+- needs_info
+- budget
+- lifecycle
+- error

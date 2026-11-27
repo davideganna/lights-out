@@ -16,6 +16,11 @@ from .models import Ticket
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
+def is_repo(name: str) -> bool:
+    """True if `name` looks like "owner/repo"."""
+    return bool(_REPO.match(name))
+
+
 class RoutingError(ValueError):
     """The card can't be routed; the message is written for the person who wrote the card."""
 
@@ -36,7 +41,7 @@ def parse_repo_labels(spec: str) -> dict[str, str]:
     for item in filter(None, (part.strip() for part in spec.split(","))):
         label, sep, repo = item.partition("=")
         label, repo = label.strip(), repo.strip()
-        if not sep or not label or not _REPO.match(repo):
+        if not sep or not label or not is_repo(repo):
             raise ValueError(f"REPO_LABELS entry {item!r} must look like 'label=owner/repo'")
         key = label.lower()
         if key in mapping:
