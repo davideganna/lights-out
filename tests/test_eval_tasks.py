@@ -146,7 +146,6 @@ def test_real_tasks_load():
             assert f.read_text(encoding="utf-8").lstrip().startswith('"""'), f"{f} needs a docstring"
 
 
-
 @pytest.fixture
 def sample_copy(tmp_path) -> Path:
     dest = tmp_path / "sample"
