@@ -42,11 +42,19 @@ CREATE INDEX IF NOT EXISTS events_run ON events(run_id);
 -- Approval commands (PR comments or reviews) already acted on, so each is handled once.
 CREATE TABLE IF NOT EXISTS handled_commands (
     repo TEXT,
-    kind TEXT,      -- comment | review
+    kind TEXT,      -- comment | review | feedback-comment | feedback-review | feedback-line | revision-limit
     item_id TEXT,
     run_id INTEGER,
     at TEXT,
     PRIMARY KEY (repo, kind, item_id)
+);
+
+-- One row per revision run started because a human asked for changes on a PR.
+CREATE TABLE IF NOT EXISTS pr_revisions (
+    repo TEXT,
+    pr_number INTEGER,
+    run_id INTEGER,
+    at TEXT
 );
 """
 
@@ -163,6 +171,24 @@ class Store:
             (repo, kind, str(item_id), run_id, _now()),
         )
         self._db.commit()
+
+    def add_revision(self, repo: str, number: int, run_id: int) -> None:
+        self._db.execute(
+            "INSERT INTO pr_revisions (repo, pr_number, run_id, at) VALUES (?, ?, ?, ?)", (repo, number, run_id, _now())
+        )
+        self._db.commit()
+
+    def revision_count(self, repo: str, number: int) -> int:
+        return int(
+            self._db.execute(
+                "SELECT COUNT(*) FROM pr_revisions WHERE repo=? AND pr_number=?", (repo, number)
+            ).fetchone()[0]
+        )
+
+    def revision_of(self, run_id: int) -> tuple[str, int] | None:
+        """(repo, PR number) if this run is a revision of a PR, else None."""
+        row = self._db.execute("SELECT repo, pr_number FROM pr_revisions WHERE run_id=?", (run_id,)).fetchone()
+        return (row[0], int(row[1])) if row else None
 
     def running(self) -> list[Run]:
         return self._rows("SELECT * FROM runs WHERE status='running'")

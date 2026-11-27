@@ -158,6 +158,7 @@ class Config:
     max_fix_attempts: int = 3
     max_ci_fix_attempts: int = 2
     max_review_rounds: int = 2
+    max_pr_revisions: int = 3
     coder_max_turns: int = 150
     check_command: str = "make check"
     check_timeout_s: int = 1200
@@ -235,6 +236,7 @@ class Config:
             max_fix_attempts=int(_get("MAX_FIX_ATTEMPTS", "3")),
             max_ci_fix_attempts=int(_get("MAX_CI_FIX_ATTEMPTS", "2")),
             max_review_rounds=int(_get("MAX_REVIEW_ROUNDS", "2")),
+            max_pr_revisions=int(_get("MAX_PR_REVISIONS", "3")),
             coder_max_turns=int(_get("CODER_MAX_TURNS", "150")),
             check_command=_get("CHECK_COMMAND", "make check"),
             check_timeout_s=int(_get("CHECK_TIMEOUT_S", "1200")),

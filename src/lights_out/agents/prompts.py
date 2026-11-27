@@ -71,6 +71,22 @@ CODER_TASK = """\
 
 Implement the ticket now. Run `{check_command}` yourself before you finish."""
 
+REVISE_PR = """\
+{ticket}
+
+## Current changes on the PR (diff against the base branch)
+```diff
+{diff}
+```
+
+## Feedback
+A maintainer left this feedback on your open pull request:
+
+{feedback}
+
+Address it, keep `{check_command}` passing, and run it yourself before you finish. Then reply \
+with a short summary of what you changed and which comments you addressed."""
+
 FIX_CHECKS = """\
 `{check_command}` failed after your changes. Fix the code (or the tests, if a \
 test is wrong) so it passes. Do not delete or skip tests to make it pass.

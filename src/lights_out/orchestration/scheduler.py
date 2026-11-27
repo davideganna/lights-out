@@ -18,28 +18,22 @@ import signal
 import sys
 import threading
 from collections.abc import Coroutine
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from ..core.config import Config
 from ..integrations.alerts import NullAlerter
-from ..integrations.trello import TrelloClient
+from ..integrations.github import GitHubError
+from ..integrations.trello import TrelloClient, TrelloError
 from ..reporting.report import TRANSCRIPT_RE, write_reports
 from ..reporting.store import Store
 from .followup import FOLLOWUP_ERRORS, PRWatcher
 from .health import Heartbeat
-from .pipeline import Pipeline
+from .pipeline import MAX_ATTEMPTS_PER_DAY, Pipeline, today
 
 log = logging.getLogger(__name__)
-
-# A card that fails is moved out of Queued; if a human queues it again the same
-# day it is retried, but not more than this many times (protects the budget).
-MAX_ATTEMPTS_PER_DAY = 3
-
-
-def today() -> str:
-    return datetime.now().date().isoformat()
 
 
 class Scheduler:
@@ -69,6 +63,10 @@ class Scheduler:
         """Runs still marked 'running' were cut off by a crash or restart: put their cards back."""
         for run in self.store.running():
             log.warning("Recovering interrupted run #%s (card #%s)", run.id, run.card_short_id)
+            revision = self.store.revision_of(run.id)
+            if revision is not None:
+                self._recover_revision(run, *revision)
+                continue
             self.store.finish(
                 run.id,
                 status="interrupted",
@@ -83,6 +81,23 @@ class Scheduler:
             except Exception:  # noqa: BLE001
                 log.exception("Could not move card %s back", run.card_id)
             write_reports(self.store, self.cfg.reports_dir, run.day, runs_dir=self.cfg.runs_dir)
+
+    def _recover_revision(self, run, repo: str, number: int) -> None:
+        """A revision of an open PR was cut off: the PR stays open (the card must not be re-run from scratch)."""
+        pr_url = f"https://github.com/{repo}/pull/{number}"
+        error = f"Interrupted during stage '{run.stage}' (process restarted)."
+        self.store.finish(run.id, status="pr_open", cost_usd=run.cost_usd, pr_url=pr_url, error=error)
+        text = (
+            "🤖 **lights-out** was interrupted while revising this PR (run "
+            f"#{run.id}); the branch may already have been updated. A human needs to take a look."
+        )
+        try:
+            self.trello.comment(run.card_id, text)
+            self.trello.move(run.card_id, self.cfg.lists.pr_opened)
+            self.pipeline.github_factory(repo).comment_pr(number, text)
+        except (TrelloError, GitHubError, httpx.HTTPError):
+            log.exception("Could not report the interrupted revision of %s", pr_url)
+        write_reports(self.store, self.cfg.reports_dir, run.day, runs_dir=self.cfg.runs_dir)
 
     def next_card(self, day: str):
         for card in self.trello.cards_in(self.cfg.lists.ready):
@@ -125,25 +140,25 @@ class Scheduler:
         write_reports(self.store, self.cfg.reports_dir, day, runs_dir=self.cfg.runs_dir)
         return True
 
-    def _startup_pr_check(self) -> None:
+    async def _startup_pr_check(self) -> None:
         if self.pr_watcher is None:
             return
         try:
-            self.pr_watcher.check_now()
+            await self.pr_watcher.check_now()
         except (*FOLLOWUP_ERRORS, OSError):  # a follow-up problem must not stop the service
             log.exception("PR follow-up error")
 
     async def run_now(self) -> None:
         """Process everything currently queued, then exit."""
         self.recover()
-        self._startup_pr_check()
+        await self._startup_pr_check()
         while not self.stop.is_set() and await self.work_once():
             pass
         write_reports(self.store, self.cfg.reports_dir, today(), runs_dir=self.cfg.runs_dir)
 
     async def run_forever(self) -> None:
         self.recover()
-        self._startup_pr_check()
+        await self._startup_pr_check()
         write_reports(self.store, self.cfg.reports_dir, today(), runs_dir=self.cfg.runs_dir)
         log.info("Watching '%s' every %ds", self.cfg.lists.ready, self.cfg.poll_seconds)
         self.alerter.send("lifecycle", f"lights-out: service started, watching '{self.cfg.lists.ready}'.")
@@ -163,7 +178,7 @@ class Scheduler:
                     worked = False
                 if not worked and self.pr_watcher is not None and not self.stop.is_set():
                     try:
-                        self.pr_watcher.maybe_check()  # no card in progress: follow up on held PRs
+                        await self.pr_watcher.maybe_check()  # no card in progress: follow up on held PRs
                     except Exception:  # noqa: BLE001 - a follow-up problem must not stop the queue watcher
                         log.exception("PR follow-up error")
                 if not worked and not self.stop.is_set():  # after a card, check the queue again straight away
