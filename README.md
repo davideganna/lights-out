@@ -264,6 +264,13 @@ evaluation completes, whatever the pass rate. A task is a directory with `task.t
 optional `setup.patch` and an optional `solution.patch` (a reference solution used only by the repository's own
 tests and never shown to agents); see the existing ones.
 
+`lights-out eval` also prints a metrics summary and writes `report.md` next to `results.json`. To report on results
+(or compare with a baseline; exit code 1 on a regression of more than 10 points in success or false proceed rate):
+
+```
+lights-out eval-report RESULTS [RESULTS ...] [--baseline BASELINE] [--markdown OUT.md]
+```
+
 ## Development
 
 `make check` runs ruff and the test suite (it creates a local `.venv`). Without a local Python:

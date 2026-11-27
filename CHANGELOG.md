@@ -13,6 +13,12 @@ All notable changes to lights-out are documented here. The format follows
   self-contained page with no network assets.
 
 ### Added
+- Evaluation: `lights-out eval-report RESULTS [RESULTS ...] [--baseline BASELINE] [--markdown OUT.md]` turns
+  `results.json` files into metrics (success rate overall and per category, implementation success, false needs_info
+  and false proceed rates, cost, time, fix and review rounds, per-task pass rates with `--repeat`), compares them
+  with a baseline and exits 1 on a regression (success rate down or false proceed rate up by more than 10 points).
+  `results.json` now starts with a `settings` block (models, efforts, lights-out commit, repeat, max USD) and
+  `lights-out eval` prints the summary and writes `report.md` next to it.
 - Evaluation: 14 more tasks that should be implemented (6 features, 4 planted bugs, 2 refactors, 1 docs task and 1
   task whose answer is in the card comments), each with hidden acceptance tests, plus an optional `solution.patch`
   per task (a reference solution the runner never shows to agents). Tests check that every acceptance suite fails
