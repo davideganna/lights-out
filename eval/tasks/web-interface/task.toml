@@ -1,0 +1,8 @@
+id = "web-interface"
+title = "Build a web interface for the ledger"
+category = "too_large"
+expected = "needs_info"
+description = """
+I'd like to stop using the terminal. Build a web interface for `ledger`: a page to add expenses, a page that lists
+them, the reports by category and by month, and some charts. It should look good on my phone as well.
+"""

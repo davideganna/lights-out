@@ -1,0 +1,7 @@
+id = "add-users"
+title = "Add users"
+category = "ambiguous"
+expected = "needs_info"
+description = """
+My partner wants to use ledger too, so we need users. Please add them to ledger.
+"""

@@ -1,0 +1,7 @@
+id = "why-is-report-slow"
+title = "Why is the report slow?"
+category = "not_actionable"
+expected = "needs_info"
+description = """
+Why is `ledger report` slow?
+"""

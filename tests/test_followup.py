@@ -24,12 +24,24 @@ class FakeTrello:
     def __init__(self):
         self.comments: list[tuple[str, str]] = []
         self.moves: list[tuple[str, str]] = []
+        self.current_list: str | None = "PR Opened"
+
+    def card_list(self, card_id):
+        return self.current_list
 
     def comment(self, card_id, text):
         self.comments.append((card_id, text))
 
     def move(self, card_id, list_name, top=True):
         self.moves.append((card_id, list_name))
+
+
+class FakeAlerter:
+    def __init__(self):
+        self.sent: list[tuple[str, str]] = []
+
+    def send(self, event, text):
+        self.sent.append((event, text))
 
 
 class FakeGitHub:
@@ -52,6 +64,7 @@ class FakeGitHub:
         self.perms = {"alice": {"permission": "write", "role_name": "write"}}
         self.checks: list[dict] = [{"name": "ci", "status": "completed", "conclusion": "success"}]
         self.merge_status = 200
+        self.delete_error = False
         self.requests: list[tuple[str, str]] = []
         self.bodies: list[dict] = []
 
@@ -82,7 +95,9 @@ class FakeGitHub:
             if self.merge_status >= 400:
                 return httpx.Response(self.merge_status, json={"message": "not mergeable"})
             return httpx.Response(200, json={"sha": "m1"})
-        if m == "DELETE" and path == "/git/refs/heads/lights-out/7":
+        if m == "DELETE" and path in ("/git/refs/heads/lights-out/7", "/git/refs/heads/agent/7-x"):
+            if self.delete_error:
+                raise httpx.ConnectError("down")
             return httpx.Response(204)
         if m == "POST" and path == "/issues/7/comments":
             return httpx.Response(201, json={})
@@ -135,9 +150,18 @@ class Env:
         self.gh = FakeGitHub()
         self.now = 0.0
         self.revisions: list[tuple] = []
-        self.watcher = PRWatcher(self.cfg, self.trello, self.store, lambda repo: self.gh.client(), lambda: self.now)
+        self.alerter = FakeAlerter()
+        self.watcher = PRWatcher(
+            self.cfg, self.trello, self.store, lambda repo: self.gh.client(), lambda: self.now, alerter=self.alerter
+        )
         self.revising = PRWatcher(
-            self.cfg, self.trello, self.store, lambda repo: self.gh.client(), lambda: self.now, revise=self.fake_revise
+            self.cfg,
+            self.trello,
+            self.store,
+            lambda repo: self.gh.client(),
+            lambda: self.now,
+            revise=self.fake_revise,
+            alerter=self.alerter,
         )
 
     async def fake_revise(self, run, pr, feedback):
@@ -482,3 +506,84 @@ async def test_review_comments_and_review_body_parsing():
     c = gh.client()
     assert c.review_comments(7) == [{"id": 1, "user": "a", "body": "x", "path": "a.py", "line": 9, "created_at": AFTER}]
     assert c.reviews(7)[0]["body"] == "hello"
+
+
+def _merge_by_human(env, ref="agent/7-x"):
+    env.gh.pull.update(state="closed", merged=True, merged_by={"login": "bob"})
+    env.gh.pull["head"]["ref"] = ref
+
+
+async def test_merged_by_human_deletes_agent_branch(env):
+    rid = env.seed()
+    before = env.run(rid)
+    _merge_by_human(env)
+    await env.watcher.check_all()
+    after = env.run(rid)
+    assert after.status == "merged" and after.cost_usd == before.cost_usd
+    assert after.finished_at == before.finished_at
+    assert ("c1", "Done") in env.trello.moves and env.trello.comments
+    assert env.gh.calls("DELETE") == ["/git/refs/heads/agent/7-x"]
+
+
+async def test_merged_by_human_non_agent_branch_is_kept(env):
+    env.seed()
+    _merge_by_human(env, "lights-out/7")
+    await env.watcher.check_all()
+    assert env.gh.calls("DELETE") == []
+
+
+async def test_closed_sends_one_pr_open_alert(env):
+    rid = env.seed()
+    env.gh.pull.update(state="closed")
+    await env.watcher.check_all()
+    run = env.run(rid)
+    assert run.status == "failed" and "pr_closed" in env.events(rid)
+    assert [e for e, _ in env.alerter.sent] == ["pr_open"]
+    assert "https://github.com/o/app/pull/7" in env.alerter.sent[0][1]
+
+
+@pytest.mark.parametrize("where", ["Done", "Backlog"])
+@pytest.mark.parametrize("merged", [True, False])
+async def test_card_already_moved_by_human_is_not_moved(env, where, merged):
+    rid = env.seed()
+    env.trello.current_list = where
+    env.gh.pull.update(state="closed", merged=merged, merged_by={"login": "bob"} if merged else None)
+    await env.watcher.check_all()
+    assert env.trello.moves == []
+    assert env.run(rid).status == ("merged" if merged else "failed")
+    n = len(env.gh.requests)
+    await env.watcher.check_all()
+    assert len(env.gh.requests) == n
+
+
+async def test_open_pr_is_untouched(env):
+    rid = env.seed()
+    await env.watcher.check_all()
+    assert env.trello.moves == [] and env.alerter.sent == []
+    assert env.run(rid).status == "pr_open"
+
+
+async def test_branch_delete_outage_does_not_undo_the_merge(env):
+    rid = env.seed()
+    _merge_by_human(env)
+    env.gh.delete_error = True
+    await env.watcher.check_all()
+    assert env.run(rid).status == "merged"
+
+
+async def test_poll_seconds_zero_disables_the_watcher(env):
+    env.seed()
+    env.cfg.pr_poll_seconds = 0
+    await env.watcher.maybe_check()
+    await env.watcher.check_now()
+    assert env.gh.requests == []
+
+
+async def test_check_now_runs_immediately_then_interval_applies(env):
+    env.seed()
+    await env.watcher.check_now()
+    n = len(env.gh.requests)
+    assert n > 0
+    env.now = 10
+    await env.watcher.maybe_check()
+    assert len(env.gh.requests) == n

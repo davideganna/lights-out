@@ -29,7 +29,7 @@ from ..integrations.github import GitHubError
 from ..integrations.trello import TrelloClient, TrelloError
 from ..reporting.report import TRANSCRIPT_RE, write_reports
 from ..reporting.store import Store
-from .followup import PRWatcher
+from .followup import FOLLOWUP_ERRORS, PRWatcher
 from .health import Heartbeat
 from .pipeline import MAX_ATTEMPTS_PER_DAY, Pipeline, today
 
@@ -140,15 +140,25 @@ class Scheduler:
         write_reports(self.store, self.cfg.reports_dir, day, runs_dir=self.cfg.runs_dir)
         return True
 
+    async def _startup_pr_check(self) -> None:
+        if self.pr_watcher is None:
+            return
+        try:
+            await self.pr_watcher.check_now()
+        except (*FOLLOWUP_ERRORS, OSError):  # a follow-up problem must not stop the service
+            log.exception("PR follow-up error")
+
     async def run_now(self) -> None:
         """Process everything currently queued, then exit."""
         self.recover()
+        await self._startup_pr_check()
         while not self.stop.is_set() and await self.work_once():
             pass
         write_reports(self.store, self.cfg.reports_dir, today(), runs_dir=self.cfg.runs_dir)
 
     async def run_forever(self) -> None:
         self.recover()
+        await self._startup_pr_check()
         write_reports(self.store, self.cfg.reports_dir, today(), runs_dir=self.cfg.runs_dir)
         log.info("Watching '%s' every %ds", self.cfg.lists.ready, self.cfg.poll_seconds)
         self.alerter.send("lifecycle", f"lights-out: service started, watching '{self.cfg.lists.ready}'.")

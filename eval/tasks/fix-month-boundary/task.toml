@@ -1,0 +1,15 @@
+id = "fix-month-boundary"
+title = "Last day of the month is counted in the next month"
+category = "bug"
+expected = "proceed"
+description = """
+I pay my rent on the last day of every month. I added it like this:
+
+    ledger add 2024-01-31 950 rent
+
+but in `ledger report --by month` the 950 shows up under 2024-02 instead of 2024-01. The same happens
+with other last-of-the-month expenses, for example on 28 February or 31 December. Expenses in the middle
+of a month are fine.
+
+Please fix it so every expense is reported in the month it was made.
+"""

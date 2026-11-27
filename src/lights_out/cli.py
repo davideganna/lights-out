@@ -6,7 +6,8 @@ import argparse
 import asyncio
 import logging
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
+from pathlib import Path
 
 from .agents.agents import ClaudeAgents, check_claude
 from .core.config import Config, ConfigError
@@ -50,7 +51,9 @@ def build(cfg: Config) -> tuple[TrelloClient, Store, Scheduler]:
         alerter=alerter,
         heartbeat=heartbeat,
     )
-    watcher = PRWatcher(cfg, trello, store, lambda repo: GitHubClient(cfg.github_token, repo), revise=pipeline.revise)
+    watcher = PRWatcher(
+        cfg, trello, store, lambda repo: GitHubClient(cfg.github_token, repo), revise=pipeline.revise, alerter=alerter
+    )
     return trello, store, Scheduler(cfg, trello, store, pipeline, heartbeat, alerter=alerter, pr_watcher=watcher)
 
 
@@ -172,6 +175,35 @@ def cmd_test_alert(cfg: Config, alerter: Alerter | None = None) -> int:
     return 1
 
 
+def cmd_eval(args: argparse.Namespace) -> int:
+    from .eval.runner import eval_config, run_eval
+    from .eval.tasks import TaskError, load_tasks
+
+    eval_dir = Path.cwd() / "eval"
+    sample_repo, tasks_dir = eval_dir / "sample-repo", eval_dir / "tasks"
+    if not sample_repo.is_dir() or not tasks_dir.is_dir():
+        print(f"Evaluation files not found: expected {sample_repo} and {tasks_dir}", file=sys.stderr)
+        return 2
+    ids = [t.strip() for t in args.tasks.split(",") if t.strip()] if args.tasks else None
+    try:
+        tasks = load_tasks(tasks_dir, ids)
+    except TaskError as e:
+        print(f"Task error: {e}", file=sys.stderr)
+        return 2
+    if not tasks:
+        print(f"No tasks found in {tasks_dir}", file=sys.stderr)
+        return 2
+    out_dir = Path(args.out) if args.out else Path("eval-results") / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    try:
+        cfg = eval_config(out_dir.resolve())
+    except ConfigError as e:
+        print(f"Configuration error: {e}", file=sys.stderr)
+        return 2
+    asyncio.run(run_eval(tasks, cfg, sample_repo, repeat=args.repeat, max_usd=args.max_usd))
+    print(f"Results: {cfg.data_dir / 'results.json'}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="lights-out")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -182,6 +214,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("setup-board", help="create missing Trello lists and repository labels")
     boot = sub.add_parser("bootstrap", help="give an empty repository its first commit (CI, Makefile, CLAUDE.md)")
     boot.add_argument("repo", help="repository label or owner/repo (must be in REPO_LABELS or DEFAULT_REPO)")
+    ev = sub.add_parser("eval", help="run the pipeline on sample tickets and check the results (costs real money)")
+    ev.add_argument("--tasks", default="", help="comma-separated task ids (default: all)")
+    ev.add_argument("--repeat", type=int, default=1, help="runs per task (default 1)")
+    ev.add_argument("--out", default="", help="output directory (default eval-results/<UTC timestamp>)")
+    ev.add_argument("--max-usd", type=float, default=30.0, help="stop before a task once this much is spent")
     sub.add_parser("report", help="regenerate today's HTML report")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
@@ -190,6 +227,8 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    if args.command == "eval":  # needs no Trello or GitHub configuration
+        return cmd_eval(args)
     try:
         cfg = Config.from_env()
     except ConfigError as e:

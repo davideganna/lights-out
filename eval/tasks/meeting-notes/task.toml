@@ -1,0 +1,14 @@
+id = "meeting-notes"
+title = "Notes from the ledger sync meeting"
+category = "not_actionable"
+expected = "needs_info"
+description = """
+Notes from today's `ledger` sync.
+
+Attendees: Sam, Priya, Jo.
+
+- Went through the open issues, nothing new.
+- Talked about budgets, maybe next year.
+- Jo is on holiday next week.
+- No decisions were taken.
+"""

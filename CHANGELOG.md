@@ -6,12 +6,27 @@ All notable changes to lights-out are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Dashboard redesign: dark-first theme (light still available), sticky top bar with live status, a
+  "Running now" strip for cards in progress, KPI tiles with icons and delta badges, Chart/Table switches,
+  status badges with SVG icons, an expandable runs table and a layout that fits phones. Still a single
+  self-contained page with no network assets.
+
 ### Added
 - Revisions on request: a comment, line comment or review (comments or changes requested) on an open lights-out PR
   from a user with write access, posted after the PR's latest commit, starts a revision run. The coder gets the
   ticket, the current diff and the feedback in a fresh session; checks, review and delivery run as for a new
   card (a held PR stays held), and lights-out replies on the PR with what changed. `MAX_PR_REVISIONS` (default 3)
   caps revisions per PR; revisions count towards `MAX_DAY_USD` and the 3 attempts per card per day.
+- Ten more eval tasks: 8 that should be sent back for more information (3 ambiguous, 2 too large, 2 not
+  actionable, 1 self-contradictory) and 2 near-miss tasks that look vague but should proceed
+  (`sort-list-by-date`, `list-total-line`). Tasks may carry an optional `solution.patch` reference solution, which
+  the tests check (acceptance fails before, passes after) and which is never given to agents.
+- Evaluation: `lights-out eval [--tasks ...] [--repeat N] [--out DIR] [--max-usd X]` runs the real pipeline (real
+  agents, real checks and review, no Trello or GitHub) on tasks in `eval/tasks/` against the sample repository
+  `eval/sample-repo/` (`ledger`), then runs hidden acceptance tests on the merged branch. It writes `results.json`
+  (outcome, check and acceptance results, cost, duration, fix and review rounds) and stops at `--max-usd`
+  (default 30). First tasks: `add-category-filter`, `fix-month-boundary`, `export-somewhere`.
 - Alerts: set `ALERT_WEBHOOK_URL` (Slack, Discord `/slack`, Mattermost) to get a `{"text": ...}` POST when a card
   fails, a PR is left open, a card goes to Needs Info, the daily budget is used up, the service starts or
   stops, or the scheduler loop hits an unexpected error. `ALERT_EVENTS` selects events, `lights-out test-alert`
@@ -26,7 +41,9 @@ All notable changes to lights-out are documented here. The format follows
   a `HEALTHCHECK` that calls it.
 - Follow-up on held PRs: between cards, a watcher (every `PR_POLL_SECONDS`, default 120) checks each card whose
   latest run is `pr_open`. PRs merged by hand move the card to Done (run `merged`), PRs closed without merging
-  move it to Failed. A `/lights-out merge` PR comment (or an approving review) from a user with write, maintain
+  move it to Failed (with a `pr_open` alert). The card moves only if still in PR Opened, the `agent/*` branch is
+  deleted after a human merge, a check runs at startup, and `PR_POLL_SECONDS=0` disables the watcher.
+  A `/lights-out merge` PR comment (or an approving review) from a user with write, maintain
   or admin access, posted after the latest commit, merges the PR when CI is green; each command is acted on once.
 - The dashboard's run detail links each run's agent transcripts (opened in a new tab). The server serves them at
   `/runs/<run_id>/<file>` (strict name check, 404 otherwise) and `data.json` has a `transcripts` list per run.
