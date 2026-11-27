@@ -56,7 +56,7 @@ The phases are in priority order. Each item is a candidate ticket.
 ## Phase 5: Packaging for other teams
 
 - [ ] GitHub App instead of a personal token: separate bot identity, scoped permissions, installable
-- [ ] One config file (`lights-out.yaml`): board, column mapping, label → repository mapping, policies,
+- [x] One config file (`lights-out.yaml`): board, column mapping, label → repository mapping, policies,
       budgets, check command
 - [ ] Pre-built image on GHCR and tagged releases
 - [ ] `lights-out init`: interactive setup that checks credentials, creates board columns and

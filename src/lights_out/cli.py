@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .agents.agents import ClaudeAgents, check_claude
-from .core.config import Config, ConfigError
+from .core.config import Config, ConfigError, effective_settings
 from .core.routing import Route
 from .integrations.alerts import Alerter
 from .integrations.github import GitHubClient
@@ -204,6 +204,17 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_config() -> int:
+    try:
+        rows = effective_settings()
+    except ConfigError as e:
+        print(f"Configuration error: {e}", file=sys.stderr)
+        return 2
+    for key, value, source in rows:
+        print(f"{key} = {value}  [{source}]")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="lights-out")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -219,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument("--repeat", type=int, default=1, help="runs per task (default 1)")
     ev.add_argument("--out", default="", help="output directory (default eval-results/<UTC timestamp>)")
     ev.add_argument("--max-usd", type=float, default=30.0, help="stop before a task once this much is spent")
+    sub.add_parser("config", help="print the effective configuration and where each value comes from")
     sub.add_parser("report", help="regenerate today's HTML report")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
@@ -229,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     if args.command == "eval":  # needs no Trello or GitHub configuration
         return cmd_eval(args)
+    if args.command == "config":  # needs no credentials
+        return cmd_config()
     try:
         cfg = Config.from_env()
     except ConfigError as e:
