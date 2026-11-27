@@ -18,6 +18,10 @@ All notable changes to lights-out are documented here. The format follows
   per task (a reference solution the runner never shows to agents). Tests check that every acceptance suite fails
   on the sample repository and passes with its reference solution, and that planted bugs slip past the sample's own
   `make check`.
+- Ten more eval tasks: 8 that should be sent back for more information (3 ambiguous, 2 too large, 2 not
+  actionable, 1 self-contradictory) and 2 near-miss tasks that look vague but should proceed
+  (`sort-list-by-date`, `list-total-line`). Tasks may carry an optional `solution.patch` reference solution, which
+  the tests check (acceptance fails before, passes after) and which is never given to agents.
 - Evaluation: `lights-out eval [--tasks ...] [--repeat N] [--out DIR] [--max-usd X]` runs the real pipeline (real
   agents, real checks and review, no Trello or GitHub) on tasks in `eval/tasks/` against the sample repository
   `eval/sample-repo/` (`ledger`), then runs hidden acceptance tests on the merged branch. It writes `results.json`

@@ -1,0 +1,10 @@
+id = "decimals-contradiction"
+title = "Decimals in amounts"
+category = "ambiguous"
+expected = "needs_info"
+description = """
+Amounts in `ledger` must always be shown with two decimals, in `list` and in `report`, so that 3 is shown as 3.00
+and 12.5 as 12.50. I'm tired of the columns not lining up.
+
+Also, the report is meant for a quick overview, so it should show whole amounts without decimals: 15, not 15.00.
+"""

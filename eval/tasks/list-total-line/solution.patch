@@ -1,0 +1,28 @@
+--- a/src/ledger/cli.py	2026-11-26 22:34:58.638783118 +0000
++++ b/src/ledger/cli.py	2026-11-26 22:37:01.447017182 +0000
+@@ -56,6 +56,7 @@
+     elif args.command == "list":
+         for e in expenses:
+             print(f"{e.date.isoformat()}  {e.amount}  {e.category}  {e.note}".rstrip())
++        print(f"Total  {sum((e.amount for e in expenses), Decimal(0))}")
+     elif args.command == "report":
+         totals = reports.totals_by_month(expenses) if args.by == "month" else reports.totals_by_category(expenses)
+         for key, total in totals.items():
+--- a/tests/test_cli.py	2026-11-26 22:34:58.638783118 +0000
++++ b/tests/test_cli.py	2026-11-26 22:37:01.447460883 +0000
+@@ -16,9 +16,15 @@
+     assert capsys.readouterr().out.splitlines() == [
+         "2024-03-05  12.50  food  lunch",
+         "2024-03-06  3  transport",
++        "Total  15.50",
+     ]
+ 
+ 
++def test_list_total_with_no_expenses(data, capsys):
++    assert main(["--file", data, "list"]) == 0
++    assert capsys.readouterr().out.splitlines() == ["Total  0"]
++
++
+ def test_report_by_category(data, capsys):
+     main(["--file", data, "add", "2024-03-05", "10", "food"])
+     main(["--file", data, "add", "2024-03-06", "5", "food"])

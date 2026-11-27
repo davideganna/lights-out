@@ -1,0 +1,8 @@
+id = "nicer-report"
+title = "Make the report look nicer"
+category = "ambiguous"
+expected = "needs_info"
+description = """
+The output of `ledger report` is ugly. Please make it look nicer, I show it to my partner every month and it is
+embarrassing.
+"""
