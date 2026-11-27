@@ -1,0 +1,69 @@
+diff --git a/src/ledger/cli.py b/src/ledger/cli.py
+index afd88ae..092bf5f 100644
+--- a/src/ledger/cli.py
++++ b/src/ledger/cli.py
+@@ -27,6 +27,17 @@ def _amount(text: str) -> Decimal:
+     return value
+ 
+ 
++def _add_range(parser: argparse.ArgumentParser) -> None:
++    parser.add_argument("--from", dest="start", type=_date, help="first day to include (YYYY-MM-DD)")
++    parser.add_argument("--to", dest="end", type=_date, help="last day to include (YYYY-MM-DD)")
++
++
++def _in_range(expenses: list[Expense], args: argparse.Namespace) -> list[Expense]:
++    return [
++        e for e in expenses if (args.start is None or e.date >= args.start) and (args.end is None or e.date <= args.end)
++    ]
++
++
+ def build_parser() -> argparse.ArgumentParser:
+     parser = argparse.ArgumentParser(prog="ledger", description="Track personal expenses.")
+     parser.add_argument("--file", default="ledger.json", help="data file (default: ledger.json)")
+@@ -38,10 +49,12 @@ def build_parser() -> argparse.ArgumentParser:
+     add.add_argument("category")
+     add.add_argument("--note", default="")
+ 
+-    sub.add_parser("list", help="show all expenses")
++    lst = sub.add_parser("list", help="show all expenses")
++    _add_range(lst)
+ 
+     report = sub.add_parser("report", help="show totals")
+     report.add_argument("--by", choices=["category", "month"], default="category")
++    _add_range(report)
+     return parser
+ 
+ 
+@@ -54,10 +67,11 @@ def main(argv: list[str] | None = None) -> int:
+         storage.save(args.file, expenses)
+         print(f"Added {args.amount} to {args.category} on {args.date.isoformat()}")
+     elif args.command == "list":
+-        for e in expenses:
++        for e in _in_range(expenses, args):
+             print(f"{e.date.isoformat()}  {e.amount}  {e.category}  {e.note}".rstrip())
+     elif args.command == "report":
+-        totals = reports.totals_by_month(expenses) if args.by == "month" else reports.totals_by_category(expenses)
++        selected = _in_range(expenses, args)
++        totals = reports.totals_by_month(selected) if args.by == "month" else reports.totals_by_category(selected)
+         for key, total in totals.items():
+             print(f"{key}  {total}")
+     return 0
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index c92871b..a1e2c54 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -40,3 +40,14 @@ def test_add_rejects_bad_input(data, bad):
+     with pytest.raises(SystemExit) as exc:
+         main(["--file", data, "add", *bad])
+     assert exc.value.code == 2
++
++
++def test_list_and_report_accept_a_date_range(data, capsys):
++    main(["--file", data, "add", "2024-03-05", "10", "food"])
++    main(["--file", data, "add", "2024-03-06", "5", "food"])
++    main(["--file", data, "add", "2024-03-07", "1", "food"])
++    capsys.readouterr()
++    main(["--file", data, "list", "--from", "2024-03-06", "--to", "2024-03-06"])
++    assert capsys.readouterr().out.splitlines() == ["2024-03-06  5  food"]
++    main(["--file", data, "report", "--from", "2024-03-06"])
++    assert capsys.readouterr().out.splitlines() == ["food  6"]

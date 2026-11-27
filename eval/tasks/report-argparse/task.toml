@@ -1,0 +1,17 @@
+id = "report-argparse"
+title = "The report command doesn't parse its options properly"
+category = "refactor"
+expected = "proceed"
+description = """
+Every command of `ledger` understands `--help` and refuses bad option values, except `report`. Today:
+
+- `ledger report --help` doesn't show any help, it just prints the report.
+- `ledger report --by yearly` is silently accepted and shows the category report, instead of an error.
+- `ledger report --by=month` is not understood either; it shows the category report.
+
+The code for `report` reads its options by hand instead of declaring them like the other commands do. Please
+make `report` parse its options in the same way as `add` and `list` (argparse, declared on the command), so
+that `ledger report --help` prints help that mentions `--by` and exits with code 0, and `--by` only accepts
+`category` or `month` (anything else is an error with exit code 2), in both the `--by month` and `--by=month`
+forms. The output of a successful report must stay exactly the same as today.
+"""

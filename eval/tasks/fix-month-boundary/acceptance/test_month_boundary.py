@@ -1,3 +1,5 @@
+"""Checks that every expense is reported in the month of its date, including the last day of a month."""
+
 import datetime
 from decimal import Decimal
 

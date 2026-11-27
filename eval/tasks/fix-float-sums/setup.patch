@@ -1,0 +1,46 @@
+diff --git a/src/ledger/cli.py b/src/ledger/cli.py
+index afd88ae..30c288b 100644
+--- a/src/ledger/cli.py
++++ b/src/ledger/cli.py
+@@ -59,7 +59,8 @@ def main(argv: list[str] | None = None) -> int:
+     elif args.command == "report":
+         totals = reports.totals_by_month(expenses) if args.by == "month" else reports.totals_by_category(expenses)
+         for key, total in totals.items():
+-            print(f"{key}  {total}")
++            shown = int(total) if isinstance(total, float) and total.is_integer() else total
++            print(f"{key}  {shown}")
+     return 0
+ 
+ 
+diff --git a/src/ledger/reports.py b/src/ledger/reports.py
+index 7faa48f..b7fee9a 100644
+--- a/src/ledger/reports.py
++++ b/src/ledger/reports.py
+@@ -3,21 +3,20 @@
+ from __future__ import annotations
+ 
+ from collections import defaultdict
+-from decimal import Decimal
+ 
+ from .models import Expense
+ 
+ 
+-def totals_by_category(expenses: list[Expense]) -> dict[str, Decimal]:
+-    totals: dict[str, Decimal] = defaultdict(Decimal)
++def totals_by_category(expenses: list[Expense]) -> dict[str, float]:
++    totals: dict[str, float] = defaultdict(float)
+     for e in expenses:
+-        totals[e.category] += e.amount
++        totals[e.category] += float(e.amount)
+     return dict(sorted(totals.items()))
+ 
+ 
+-def totals_by_month(expenses: list[Expense]) -> dict[str, Decimal]:
++def totals_by_month(expenses: list[Expense]) -> dict[str, float]:
+     """Totals per calendar month, keyed "YYYY-MM"."""
+-    totals: dict[str, Decimal] = defaultdict(Decimal)
++    totals: dict[str, float] = defaultdict(float)
+     for e in expenses:
+-        totals[e.date.strftime("%Y-%m")] += e.amount
++        totals[e.date.strftime("%Y-%m")] += float(e.amount)
+     return dict(sorted(totals.items()))

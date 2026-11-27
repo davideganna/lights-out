@@ -1,3 +1,5 @@
+"""Checks `ledger list --category NAME`: only that category is shown, and plain `list` is unchanged."""
+
 import pytest
 
 from ledger.cli import main

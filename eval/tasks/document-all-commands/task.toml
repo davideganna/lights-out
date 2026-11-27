@@ -1,0 +1,14 @@
+id = "document-all-commands"
+title = "The README doesn't cover all the commands"
+category = "docs"
+expected = "proceed"
+description = """
+New people trying `ledger` read the README, and it has fallen behind: at least one command that `ledger --help`
+lists isn't mentioned there at all.
+
+Please bring the README up to date. For every command that `ledger --help` lists, the README should show an
+example line that starts with `ledger <command>` (for instance `ledger report --by month`), and every option
+of that command (the `--something` options shown by `ledger <command> --help`) should be mentioned too.
+Keep the existing text that is still correct. This is a documentation change only; the program itself should
+not change.
+"""

@@ -1,0 +1,101 @@
+diff --git a/src/ledger/cli.py b/src/ledger/cli.py
+index afd88ae..6a3a4f9 100644
+--- a/src/ledger/cli.py
++++ b/src/ledger/cli.py
+@@ -3,7 +3,9 @@
+ from __future__ import annotations
+ 
+ import argparse
++import dataclasses
+ import datetime
++import sys
+ from decimal import Decimal, InvalidOperation
+ 
+ from . import reports, storage
+@@ -27,6 +29,20 @@ def _amount(text: str) -> Decimal:
+     return value
+ 
+ 
++def _line(e: Expense) -> str:
++    return f"{e.date.isoformat()}  {e.amount}  {e.category}  {e.note}".rstrip()
++
++
++def _position(text: str) -> int:
++    try:
++        value = int(text)
++    except ValueError:
++        raise argparse.ArgumentTypeError(f"not a number: {text!r}") from None
++    if value < 1:
++        raise argparse.ArgumentTypeError(f"expense numbers start at 1: {text!r}")
++    return value
++
++
+ def build_parser() -> argparse.ArgumentParser:
+     parser = argparse.ArgumentParser(prog="ledger", description="Track personal expenses.")
+     parser.add_argument("--file", default="ledger.json", help="data file (default: ledger.json)")
+@@ -40,6 +56,11 @@ def build_parser() -> argparse.ArgumentParser:
+ 
+     sub.add_parser("list", help="show all expenses")
+ 
++    edit = sub.add_parser("edit", help="change the amount or category of an expense")
++    edit.add_argument("number", type=_position, help="1 is the first listed expense")
++    edit.add_argument("--amount", type=_amount)
++    edit.add_argument("--category")
++
+     report = sub.add_parser("report", help="show totals")
+     report.add_argument("--by", choices=["category", "month"], default="category")
+     return parser
+@@ -55,7 +76,22 @@ def main(argv: list[str] | None = None) -> int:
+         print(f"Added {args.amount} to {args.category} on {args.date.isoformat()}")
+     elif args.command == "list":
+         for e in expenses:
+-            print(f"{e.date.isoformat()}  {e.amount}  {e.category}  {e.note}".rstrip())
++            print(_line(e))
++    elif args.command == "edit":
++        if args.amount is None and args.category is None:
++            print("error: give --amount and/or --category", file=sys.stderr)
++            return 1
++        if args.number > len(expenses):
++            print(f"error: no expense number {args.number} (there are {len(expenses)})", file=sys.stderr)
++            return 1
++        changes = {}
++        if args.amount is not None:
++            changes["amount"] = args.amount
++        if args.category is not None:
++            changes["category"] = args.category
++        expenses[args.number - 1] = dataclasses.replace(expenses[args.number - 1], **changes)
++        storage.save(args.file, expenses)
++        print(f"Updated {_line(expenses[args.number - 1])}")
+     elif args.command == "report":
+         totals = reports.totals_by_month(expenses) if args.by == "month" else reports.totals_by_category(expenses)
+         for key, total in totals.items():
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index c92871b..789c819 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -40,3 +40,25 @@ def test_add_rejects_bad_input(data, bad):
+     with pytest.raises(SystemExit) as exc:
+         main(["--file", data, "add", *bad])
+     assert exc.value.code == 2
++
++
++def test_edit_changes_only_the_given_fields(data, capsys):
++    main(["--file", data, "add", "2024-03-05", "12.50", "food", "--note", "lunch"])
++    capsys.readouterr()
++    assert main(["--file", data, "edit", "1", "--amount", "13"]) == 0
++    assert capsys.readouterr().out.splitlines() == ["Updated 2024-03-05  13  food  lunch"]
++    assert main(["--file", data, "edit", "1", "--category", "dining"]) == 0
++    assert capsys.readouterr().out.splitlines() == ["Updated 2024-03-05  13  dining  lunch"]
++
++
++@pytest.mark.parametrize("args", [["1"], ["2", "--amount", "1"], ["1", "--amount", "-1"]])
++def test_edit_rejects_bad_input(data, capsys, args):
++    main(["--file", data, "add", "2024-03-05", "12.50", "food"])
++    try:
++        code = main(["--file", data, "edit", *args])
++    except SystemExit as e:
++        code = e.code
++    assert code != 0
++    capsys.readouterr()
++    main(["--file", data, "list"])
++    assert capsys.readouterr().out.splitlines() == ["2024-03-05  12.50  food"]

@@ -1,3 +1,5 @@
+"""Hidden acceptance tests: `ledger list` ends with a total line."""
+
 import pytest
 
 from ledger.cli import main

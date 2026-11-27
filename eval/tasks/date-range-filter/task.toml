@@ -1,0 +1,15 @@
+id = "date-range-filter"
+title = "Only show a period: --from and --to"
+category = "feature"
+expected = "proceed"
+description = """
+I would like to look at one period only, for example one quarter, without scrolling through everything.
+
+Please add two options, `--from YYYY-MM-DD` and `--to YYYY-MM-DD`, to both `ledger list` and `ledger report`.
+They keep only the expenses from that day on (`--from`) and up to that day (`--to`), and both days are
+included. I can use just one of them, or both together, and they work together with `report --by month`.
+The output format stays exactly as it is today.
+
+A value that isn't a real date should be refused the same way `ledger add` refuses a bad date (error, exit
+code 2).
+"""

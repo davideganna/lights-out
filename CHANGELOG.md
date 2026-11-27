@@ -13,6 +13,11 @@ All notable changes to lights-out are documented here. The format follows
   self-contained page with no network assets.
 
 ### Added
+- Evaluation: 14 more tasks that should be implemented (6 features, 4 planted bugs, 2 refactors, 1 docs task and 1
+  task whose answer is in the card comments), each with hidden acceptance tests, plus an optional `solution.patch`
+  per task (a reference solution the runner never shows to agents). Tests check that every acceptance suite fails
+  on the sample repository and passes with its reference solution, and that planted bugs slip past the sample's own
+  `make check`.
 - Revisions on request: a comment, line comment or review (comments or changes requested) on an open lights-out PR
   from a user with write access, posted after the PR's latest commit, starts a revision run. The coder gets the
   ticket, the current diff and the feedback in a fresh session; checks, review and delivery run as for a new

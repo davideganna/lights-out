@@ -1,0 +1,19 @@
+id = "fix-float-sums"
+title = "Totals show tiny rounding errors"
+category = "bug"
+expected = "proceed"
+description = """
+I added two small expenses for food:
+
+    ledger add 2024-03-05 0.10 food
+    ledger add 2024-03-06 0.20 food
+
+and `ledger report` shows
+
+    food  0.30000000000000004
+
+I expected `food  0.30`. The same thing happens in `ledger report --by month`, and it gets worse the more
+expenses I add. Money should add up exactly, the way the amounts were typed in.
+
+Please fix it so the totals are exact.
+"""

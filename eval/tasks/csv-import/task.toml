@@ -1,0 +1,16 @@
+id = "csv-import"
+title = "Import expenses from a CSV file"
+category = "feature"
+expected = "proceed"
+description = """
+My bank lets me download a CSV file and I don't want to type everything in again.
+
+Please add `ledger import PATH`. The file has a header row that names the columns: `date`, `amount` and
+`category` are required and `note` is optional. The columns can come in any order. Each following row becomes
+an expense, added after the ones already in the ledger, with the same rules as `ledger add` (a real
+YYYY-MM-DD date, a positive amount). When it is done it prints `Imported N expenses` (with the number of rows).
+
+If any row is wrong (a bad date, a bad amount, or a missing date, amount or category), nothing should be
+imported at all: the data file stays as it was, the command exits with a non-zero code, and the error message
+says which line is wrong, like `line 3`, counting the header row as line 1.
+"""

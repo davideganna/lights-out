@@ -1,0 +1,21 @@
+id = "storage-interface"
+title = "Make the storage swappable so tests don't need files"
+category = "refactor"
+expected = "proceed"
+description = """
+Right now the command line always reads and writes a JSON file, which makes tests of the commands awkward:
+they have to create files in temporary folders. I would like the storage to be something the CLI is given, so
+that tests can use one that only lives in memory.
+
+Please introduce two storage classes in `ledger.storage`. Both offer `load()`, which returns a list of
+`Expense`, and `save(expenses)`, which stores a list of `Expense`:
+
+- `MemoryStore(expenses=None)` keeps the expenses in memory only (it starts with a copy of `expenses`, or
+  empty) and never touches the disk.
+- `JsonFileStore(path)` keeps them in the JSON file at `path`, in the same format as today.
+
+Then let `ledger.cli.main` take an optional second argument: `main(argv=None, store=None)`. When a store is
+given, the command uses it and ignores `--file`. When it isn't, the command line behaves exactly as it does
+today, with the same data file format and the same output. The existing `storage.load` and `storage.save`
+functions can stay.
+"""

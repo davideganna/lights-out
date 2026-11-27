@@ -1,0 +1,40 @@
+diff --git a/src/ledger/cli.py b/src/ledger/cli.py
+index afd88ae..1bbd323 100644
+--- a/src/ledger/cli.py
++++ b/src/ledger/cli.py
+@@ -40,6 +40,8 @@ def build_parser() -> argparse.ArgumentParser:
+ 
+     sub.add_parser("list", help="show all expenses")
+ 
++    sub.add_parser("categories", help="show the categories in use")
++
+     report = sub.add_parser("report", help="show totals")
+     report.add_argument("--by", choices=["category", "month"], default="category")
+     return parser
+@@ -56,6 +58,9 @@ def main(argv: list[str] | None = None) -> int:
+     elif args.command == "list":
+         for e in expenses:
+             print(f"{e.date.isoformat()}  {e.amount}  {e.category}  {e.note}".rstrip())
++    elif args.command == "categories":
++        for category in sorted({e.category for e in expenses}):
++            print(category)
+     elif args.command == "report":
+         totals = reports.totals_by_month(expenses) if args.by == "month" else reports.totals_by_category(expenses)
+         for key, total in totals.items():
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index c92871b..5febfa0 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -40,3 +40,12 @@ def test_add_rejects_bad_input(data, bad):
+     with pytest.raises(SystemExit) as exc:
+         main(["--file", data, "add", *bad])
+     assert exc.value.code == 2
++
++
++def test_categories_are_listed_once_and_sorted(data, capsys):
++    main(["--file", data, "add", "2024-03-05", "10", "transport"])
++    main(["--file", data, "add", "2024-03-06", "5", "food"])
++    main(["--file", data, "add", "2024-03-07", "1", "food"])
++    capsys.readouterr()
++    assert main(["--file", data, "categories"]) == 0
++    assert capsys.readouterr().out.splitlines() == ["food", "transport"]

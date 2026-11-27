@@ -91,6 +91,15 @@ async def test_acceptance_runs_on_the_pushed_branch_with_hidden_tests(tmp_path, 
     assert not (sample / "tests").exists()  # the sample repo itself never sees them
 
 
+async def test_solution_patch_is_never_shown_to_the_agents(tmp_path, sample, cfg):
+    task = make_task(tmp_path, acceptance="! grep -rq SOLUTION-MARKER . && ! test -e solution.patch")
+    (task.dir / "solution.patch").write_text("SOLUTION-MARKER\n")
+    r = await run_task(task, cfg, sample, factory())
+    assert r.acceptance_ok is True and r.passed
+    assert not [p for p in cfg.data_dir.rglob("*") if p.is_file() and b"SOLUTION-MARKER" in p.read_bytes()]
+    assert not list(cfg.data_dir.rglob("solution.patch"))
+
+
 async def test_hidden_tests_are_not_left_behind(tmp_path, sample, cfg):
     r = await run_task(make_task(tmp_path), cfg, sample, factory())
     assert r.acceptance_ok is True

@@ -89,6 +89,26 @@ def test_load_tasks_by_id(tmp_path):
 
 
 # --- the shipped sample repository and tasks ---------------------------------------
+NEW_TASKS = {
+    "delete-expense": "feature",
+    "edit-expense": "feature",
+    "date-range-filter": "feature",
+    "report-json": "feature",
+    "csv-import": "feature",
+    "report-total": "feature",
+    "fix-float-sums": "bug",
+    "fix-invalid-dates": "bug",
+    "fix-month-order": "bug",
+    "fix-lost-notes": "bug",
+    "storage-interface": "refactor",
+    "report-argparse": "refactor",
+    "document-all-commands": "docs",
+    "currency-symbol": "feature",
+}
+PROCEED_IDS = [t.id for t in load_tasks(TASKS) if t.expected == "proceed"]
+PATCHED_IDS = [t.id for t in load_tasks(TASKS) if t.setup_patch]
+
+
 def test_real_tasks_load():
     tasks = {t.id: t for t in load_tasks(TASKS)}
     assert {"add-category-filter", "fix-month-boundary", "export-somewhere"} <= set(tasks)
@@ -111,6 +131,19 @@ def test_real_tasks_load():
     for task_id in ("sort-list-by-date", "list-total-line"):
         assert tasks[task_id].expected == "proceed", task_id
         assert tasks[task_id].solution_patch is not None, task_id
+    assert len(PROCEED_IDS) >= 16
+    for task_id, category in NEW_TASKS.items():
+        assert tasks[task_id].category == category, task_id
+        assert tasks[task_id].expected == "proceed", task_id
+    for task_id, category in NEW_TASKS.items():
+        if category == "bug":
+            assert tasks[task_id].setup_patch is not None, task_id
+    assert tasks["currency-symbol"].comments
+    for task_id in PROCEED_IDS:
+        assert tasks[task_id].solution_patch is not None, task_id
+        assert all(f.suffix == ".py" or f.name == "conftest.py" for f in tasks[task_id].acceptance_dir.iterdir())
+        for f in tasks[task_id].acceptance_dir.glob("*.py"):
+            assert f.read_text(encoding="utf-8").lstrip().startswith('"""'), f"{f} needs a docstring"
 
 
 @pytest.fixture
@@ -156,17 +189,48 @@ def test_planted_bug_passes_the_sample_repos_own_checks(sample_copy):
     assert r.returncode == 0, r.stdout + r.stderr
 
 
-@pytest.mark.parametrize(
-    "task",
-    [t for t in load_tasks(TASKS) if t.expected == "proceed" and t.solution_patch],
-    ids=lambda t: t.id,
-)
-def test_solution_patch_turns_acceptance_tests_green(sample_copy, task):
+def _git_apply(repo: Path, patch: Path) -> None:
+    r = subprocess.run(["git", "apply", str(patch)], cwd=repo, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
+def _prepare(repo: Path, task, *, solution: bool = False) -> None:
     if task.setup_patch:
-        subprocess.run(["git", "apply", str(task.setup_patch)], cwd=sample_copy, check=True)
-    assert _acceptance(sample_copy, task) != 0
-    shutil.rmtree(sample_copy / "tests" / "acceptance")
-    subprocess.run(["git", "apply", str(task.solution_patch)], cwd=sample_copy, check=True)
-    r = subprocess.run(["make", "check", f"PYTHON={sys.executable}"], cwd=sample_copy, capture_output=True, text=True)
+        _git_apply(repo, task.setup_patch)
+    if solution:
+        _git_apply(repo, task.solution_patch)
+
+
+def _run_acceptance(repo: Path, task) -> subprocess.CompletedProcess:
+    shutil.copytree(task.acceptance_dir, repo / "tests" / "acceptance")
+    cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/acceptance"]
+    return subprocess.run(cmd, cwd=repo, capture_output=True, text=True)
+
+
+def _make_check(repo: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(["make", "check", f"PYTHON={sys.executable}"], cwd=repo, capture_output=True, text=True)
+
+
+@pytest.mark.parametrize("task_id", PROCEED_IDS)
+def test_acceptance_fails_on_sample_repo(sample_copy, task_id):
+    task = load_task(TASKS / task_id)
+    _prepare(sample_copy, task)
+    r = _run_acceptance(sample_copy, task)
+    assert r.returncode == 1, f"expected failing tests (exit 1), got {r.returncode}\n{r.stdout}{r.stderr}"
+
+
+@pytest.mark.parametrize("task_id", PROCEED_IDS)
+def test_solution_passes(sample_copy, task_id):
+    task = load_task(TASKS / task_id)
+    _prepare(sample_copy, task, solution=True)
+    check = _make_check(sample_copy)
+    assert check.returncode == 0, check.stdout + check.stderr
+    r = _run_acceptance(sample_copy, task)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert _acceptance(sample_copy, task) == 0
+
+
+@pytest.mark.parametrize("task_id", PATCHED_IDS)
+def test_setup_patches_keep_sample_check_green(sample_copy, task_id):
+    _git_apply(sample_copy, load_task(TASKS / task_id).setup_patch)
+    r = _make_check(sample_copy)
+    assert r.returncode == 0, r.stdout + r.stderr

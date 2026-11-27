@@ -1,3 +1,5 @@
+"""Hidden acceptance tests: `ledger list` shows expenses sorted by date."""
+
 import pytest
 
 from ledger.cli import main

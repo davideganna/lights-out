@@ -1,0 +1,15 @@
+id = "fix-lost-notes"
+title = "Notes don't show up in the list"
+category = "bug"
+expected = "proceed"
+description = """
+I add expenses with a note:
+
+    ledger add 2024-03-05 12.50 food --note lunch
+
+but `ledger list` shows `2024-03-05  12.50  food` and the note is gone. When I open `ledger.json` the note is
+there, so it is being saved; it just isn't read back.
+
+Please make `ledger list` show the note again, like `2024-03-05  12.50  food  lunch`. Expenses without a
+note should look the same as now.
+"""

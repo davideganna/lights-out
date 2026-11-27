@@ -1,0 +1,48 @@
+diff --git a/src/ledger/cli.py b/src/ledger/cli.py
+index afd88ae..9b03973 100644
+--- a/src/ledger/cli.py
++++ b/src/ledger/cli.py
+@@ -60,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
+         totals = reports.totals_by_month(expenses) if args.by == "month" else reports.totals_by_category(expenses)
+         for key, total in totals.items():
+             print(f"{key}  {total}")
++        print(f"total  {sum(totals.values())}")
+     return 0
+ 
+ 
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index c92871b..24fa5af 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -24,7 +24,7 @@ def test_report_by_category(data, capsys):
+     main(["--file", data, "add", "2024-03-06", "5", "food"])
+     capsys.readouterr()
+     main(["--file", data, "report"])
+-    assert capsys.readouterr().out.splitlines() == ["food  15"]
++    assert capsys.readouterr().out.splitlines() == ["food  15", "total  15"]
+ 
+ 
+ def test_report_by_month(data, capsys):
+@@ -32,7 +32,7 @@ def test_report_by_month(data, capsys):
+     main(["--file", data, "add", "2024-04-06", "5", "food"])
+     capsys.readouterr()
+     main(["--file", data, "report", "--by", "month"])
+-    assert capsys.readouterr().out.splitlines() == ["2024-03  10", "2024-04  5"]
++    assert capsys.readouterr().out.splitlines() == ["2024-03  10", "2024-04  5", "total  15"]
+ 
+ 
+ @pytest.mark.parametrize("bad", [["nope", "1", "x"], ["2024-03-05", "abc", "x"], ["2024-03-05", "-1", "x"]])
+@@ -40,3 +40,13 @@ def test_add_rejects_bad_input(data, bad):
+     with pytest.raises(SystemExit) as exc:
+         main(["--file", data, "add", *bad])
+     assert exc.value.code == 2
++
++
++def test_report_ends_with_a_total(data, capsys):
++    main(["--file", data, "report"])
++    assert capsys.readouterr().out.splitlines() == ["total  0"]
++    main(["--file", data, "add", "2024-03-05", "10.50", "food"])
++    main(["--file", data, "add", "2024-04-05", "5", "rent"])
++    capsys.readouterr()
++    main(["--file", data, "report", "--by", "month"])
++    assert capsys.readouterr().out.splitlines() == ["2024-03  10.50", "2024-04  5", "total  15.50"]

@@ -1,0 +1,16 @@
+id = "report-json"
+title = "Report as JSON"
+category = "feature"
+expected = "proceed"
+description = """
+I want to feed the report into another tool, and parsing the two-column text is awkward.
+
+Please add a `--json` option to `ledger report`. With it, the report is printed as a single JSON object
+instead of lines of text. The keys are the same as the lines of the text report (categories, or months with
+`--by month`) and each value is the total as a string, so no precision is lost, for example:
+
+    $ ledger report --json
+    {"food": "20.70", "transport": "3"}
+
+It works together with `--by month`. With no expenses at all it prints `{}`. Without `--json` nothing changes.
+"""
