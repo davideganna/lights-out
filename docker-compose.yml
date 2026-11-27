@@ -4,6 +4,9 @@ services:
     env_file: .env
     volumes:
       - agent-data:/data
+      # Compose can't make a bind mount optional (a missing source becomes a directory), so enable this
+      # line once ./lights-out.yaml exists:
+      # - ./lights-out.yaml:/app/lights-out.yaml:ro
     ports:
       - "127.0.0.1:8080:8080"   # morning report: http://localhost:8080/
     restart: unless-stopped

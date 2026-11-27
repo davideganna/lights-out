@@ -154,7 +154,8 @@ in `REPO_LABELS` and `DEFAULT_REPO`:
 
 ## Setup
 
-1. Credentials: copy `.env.example` to `.env` and fill it in.
+1. Credentials: copy `.env.example` to `.env` and fill it in. Other settings can go in `.env` or in
+   [`lights-out.yaml`](#configuration-file).
    - `ANTHROPIC_API_KEY`, or `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`.
    - Trello: get the API key at <https://trello.com/power-ups/admin> (create a Power-Up, then
      "API key"), then generate a token from the link on that page.
@@ -183,6 +184,30 @@ in `REPO_LABELS` and `DEFAULT_REPO`:
    and a `CLAUDE.md` with conventions): `docker compose run --rm lights-out bootstrap <label>`
 5. Start it: `docker compose up -d`. From then on, moving a card to **Queued** starts the agent.
    (`docker compose run --rm lights-out run-once` processes what's queued now and exits.)
+
+## Configuration file
+
+Besides `.env`, lights-out reads an optional YAML file, `lights-out.yaml` in the working directory
+(`/app` in the Docker image). Set `LIGHTS_OUT_CONFIG` to use another path. A missing file at the default
+path is fine; a missing file at an explicit `LIGHTS_OUT_CONFIG` is a config error. Copy
+`lights-out.example.yaml`, which lists every setting with its default.
+
+- Keys are the setting names in lower case: `max_day_usd`, `check_command`, `base_branch`, …
+- `lists:` maps the stages to Trello list names (`ready: Queued`; the `LIST_*` variables).
+- `repos:` maps labels to repositories (`lights-out: davideganna/lights-out`; `REPO_LABELS`).
+- `allowed_members`, `human_review_paths` and `alert_events` are YAML lists.
+- **Precedence:** an environment variable, if set (even empty), wins over the file, and the file wins over
+  the built-in default. Existing `.env`-only setups keep working unchanged.
+- **Secrets never go in the file:** `GITHUB_TOKEN`, `TRELLO_API_KEY`, `TRELLO_TOKEN`, `ALERT_WEBHOOK_URL`,
+  `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` in the file are a config error; keep them in `.env`.
+- Unknown keys (the error lists the valid ones) and wrong types (the error names the key) are config
+  errors. Strings are strict: quote numbers that should be text.
+- With Docker Compose, uncomment the `./lights-out.yaml:/app/lights-out.yaml:ro` mount in
+  `docker-compose.yml` (Compose can't make a mount optional). In the image `DATA_DIR` and `AGENT_USER`
+  are set by the Dockerfile, so the environment overrides those keys. The Dockerfile `HEALTHCHECK` reads
+  `REPORT_PORT` from the environment only.
+- `lights-out config` prints the effective settings, one per line, with the source (`env`, `file` or
+  `default`). Secrets show only as `set` or `not set`. It needs no credentials.
 
 ## Alerts
 

@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .agents.agents import ClaudeAgents, check_claude
-from .core.config import Config, ConfigError
+from .core.config import Config, ConfigError, effective_settings
 from .core.routing import Route
 from .integrations.alerts import Alerter
 from .integrations.github import GitHubClient
@@ -222,6 +222,17 @@ def cmd_eval_report(args: argparse.Namespace) -> int:
         return 2
 
 
+def cmd_config() -> int:
+    try:
+        rows = effective_settings()
+    except ConfigError as e:
+        print(f"Configuration error: {e}", file=sys.stderr)
+        return 2
+    for key, value, source in rows:
+        print(f"{key} = {value}  [{source}]")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="lights-out")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -241,6 +252,7 @@ def main(argv: list[str] | None = None) -> int:
     er.add_argument("results", nargs="+", help="results.json file(s) or folder(s) containing one")
     er.add_argument("--baseline", default="", help="results.json (or folder) to compare with; exit 1 on a regression")
     er.add_argument("--markdown", default="", help="write a Markdown report to this file")
+    sub.add_parser("config", help="print the effective configuration and where each value comes from")
     sub.add_parser("report", help="regenerate today's HTML report")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
@@ -253,6 +265,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_eval(args)
     if args.command == "eval-report":
         return cmd_eval_report(args)
+    if args.command == "config":  # needs no credentials
+        return cmd_config()
     try:
         cfg = Config.from_env()
     except ConfigError as e:

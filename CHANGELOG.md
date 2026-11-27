@@ -19,6 +19,12 @@ All notable changes to lights-out are documented here. The format follows
   with a baseline and exits 1 on a regression (success rate down or false proceed rate up by more than 10 points).
   `results.json` now starts with a `settings` block (models, efforts, lights-out commit, repeat, max USD) and
   `lights-out eval` prints the summary and writes `report.md` next to it.
+- Config file: an optional `lights-out.yaml` (path in `LIGHTS_OUT_CONFIG`) holds every non-secret setting, with
+  `lists:` for the Trello column names and `repos:` for the label → repository mapping. An environment variable
+  wins over the file, and the file over the built-in default, so `.env`-only setups work unchanged. Secrets in
+  the file, unknown keys and wrong types are config errors. `lights-out config` prints the effective settings
+  with their source (`env`, `file`, `default`); secrets show only as `set` / `not set`. See
+  `lights-out.example.yaml`.
 - Evaluation: 14 more tasks that should be implemented (6 features, 4 planted bugs, 2 refactors, 1 docs task and 1
   task whose answer is in the card comments), each with hidden acceptance tests, plus an optional `solution.patch`
   per task (a reference solution the runner never shows to agents). Tests check that every acceptance suite fails
