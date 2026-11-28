@@ -58,7 +58,7 @@ The phases are in priority order. Each item is a candidate ticket.
 - [ ] GitHub App instead of a personal token: separate bot identity, scoped permissions, installable
 - [x] One config file (`lights-out.yaml`): board, column mapping, label → repository mapping, policies,
       budgets, check command
-- [ ] Pre-built image on GHCR and tagged releases
+- [x] Pre-built image on GHCR and tagged releases
 - [ ] `lights-out init`: interactive setup that checks credentials, creates board columns and
       bootstraps the target repository
 - [ ] Hosted mode: Trello/Jira webhooks instead of polling, plus a deployment recipe for a small VPS

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib.metadata
 import logging
 import os
 import sys
@@ -224,6 +225,7 @@ def cmd_config() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="lights-out")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {importlib.metadata.version('lights-out')}")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("run", help="daemon: process cards as soon as they are queued, serve reports")
     sub.add_parser("run-once", help="process every Queued card now, then exit")

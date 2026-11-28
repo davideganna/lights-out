@@ -177,7 +177,10 @@ in `REPO_LABELS` and `DEFAULT_REPO`:
      failure logs can be sent to the coder (without it only check summaries are available), and
      *Administration* set to read so `doctor` can verify branch protection (without it, `doctor` only warns).
    - `TRELLO_BOARD_ID`: the board whose *Queued* column drives the work.
-2. Build and check: `docker compose build && docker compose run --rm lights-out doctor`
+2. Get the image and check: `docker compose pull && docker compose run --rm lights-out doctor`
+   - `docker compose pull` uses the published image `ghcr.io/davideganna/lights-out:latest` (no local build).
+   - `docker compose build` builds from your checkout instead, for local changes or unreleased code.
+   - To pin a release, change the `:latest` tag in `docker-compose.yml` to a version such as `:0.2.0`.
    (`doctor` also checks the Claude credentials with a tiny real request, well under one cent)
    If you set `ALERT_WEBHOOK_URL`, send a test message with `docker compose run --rm lights-out test-alert`.
 3. Create any missing board columns and repository labels: `docker compose run --rm lights-out setup-board`
@@ -325,6 +328,9 @@ Published results: [`eval/RESULTS.md`](eval/RESULTS.md).
 `make check` runs ruff and the test suite (it creates a local `.venv`). Without a local Python:
 `docker build -f docker/Dockerfile.test -t lights-out-test . && docker run --rm lights-out-test`.
 CI runs `make check` and builds the Docker image on every push and pull request.
+
+Releases are described in [RELEASING.md](RELEASING.md): pushing a tag `vX.Y.Z` triggers
+`.github/workflows/release.yml`, which publishes the image and a GitHub Release.
 
 See [ROADMAP.md](ROADMAP.md) for what's next and [CHANGELOG.md](CHANGELOG.md) for what changed.
 

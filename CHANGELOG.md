@@ -13,6 +13,11 @@ All notable changes to lights-out are documented here. The format follows
   self-contained page with no network assets.
 
 ### Added
+- Releases: pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`. It checks the tag against the version in
+  `pyproject.toml`, runs `make check`, pushes an amd64 and arm64 image to `ghcr.io/<owner>/lights-out` tagged
+  `<version>`, `<major>.<minor>` and `latest`, and creates a GitHub Release with that version's CHANGELOG section
+  (`scripts/changelog_section.py`). Also `lights-out --version`, an `image:` line in `docker-compose.yml`
+  (`docker compose pull` uses the published image) and `RELEASING.md`.
 - Per-repository settings: a `repos:` entry in `lights-out.yaml` can be a mapping with `repo:` plus overrides of
   `base_branch`, `check_command`, `check_timeout_s`, `ci_timeout_s`, `human_review_paths`,
   `max_auto_merge_lines`, `max_ticket_usd` and `merge_without_ci`. Other keys are a config error. The pipeline,

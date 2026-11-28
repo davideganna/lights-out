@@ -1,5 +1,6 @@
 services:
   lights-out:
+    image: ghcr.io/davideganna/lights-out:latest
     build: .
     env_file: .env
     volumes:
