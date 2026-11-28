@@ -201,8 +201,26 @@ def cmd_eval(args: argparse.Namespace) -> int:
         print(f"Configuration error: {e}", file=sys.stderr)
         return 2
     asyncio.run(run_eval(tasks, cfg, sample_repo, repeat=args.repeat, max_usd=args.max_usd))
+    from .eval.report import write_report
+
     print(f"Results: {cfg.data_dir / 'results.json'}")
+    write_report([cfg.data_dir / "results.json"], markdown_path=cfg.data_dir / "report.md")
+    print(f"Report: {cfg.data_dir / 'report.md'}")
     return 0
+
+
+def cmd_eval_report(args: argparse.Namespace) -> int:
+    from .eval.report import ReportError, write_report
+
+    try:
+        return write_report(
+            [Path(p) for p in args.results],
+            Path(args.baseline) if args.baseline else None,
+            Path(args.markdown) if args.markdown else None,
+        )
+    except ReportError as e:
+        print(f"Report error: {e}", file=sys.stderr)
+        return 2
 
 
 def cmd_config() -> int:
@@ -237,6 +255,10 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument("--repeat", type=int, default=1, help="runs per task (default 1)")
     ev.add_argument("--out", default="", help="output directory (default eval-results/<UTC timestamp>)")
     ev.add_argument("--max-usd", type=float, default=30.0, help="stop before a task once this much is spent")
+    er = sub.add_parser("eval-report", help="metrics from eval results, optionally compared with a baseline")
+    er.add_argument("results", nargs="+", help="results.json file(s) or folder(s) containing one")
+    er.add_argument("--baseline", default="", help="results.json (or folder) to compare with; exit 1 on a regression")
+    er.add_argument("--markdown", default="", help="write a Markdown report to this file")
     sub.add_parser("config", help="print the effective configuration and where each value comes from")
     sub.add_parser("report", help="regenerate today's HTML report")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -248,6 +270,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     if args.command == "eval":  # needs no Trello or GitHub configuration
         return cmd_eval(args)
+    if args.command == "eval-report":
+        return cmd_eval_report(args)
     if args.command == "config":  # needs no credentials
         return cmd_config()
     try:

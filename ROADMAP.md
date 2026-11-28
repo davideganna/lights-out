@@ -50,7 +50,7 @@ The phases are in priority order. Each item is a candidate ticket.
 ## Phase 4: Measure it (evaluation suite)
 
 - [ ] 20–30 realistic tickets on a sample repository, each with hidden acceptance tests
-- [ ] Metrics: success rate, cost and time per ticket, false "needs info", false "proceed"
+- [x] Metrics: success rate, cost and time per ticket, false "needs info", false "proceed"
 - [x] Run the suite in CI for prompt, model and effort changes; publish results in the README
 
 ## Phase 5: Packaging for other teams

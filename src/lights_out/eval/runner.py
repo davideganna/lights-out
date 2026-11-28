@@ -196,6 +196,37 @@ async def run_task(
     return result
 
 
+def _git_commit() -> str | None:
+    """The lights-out checkout's HEAD commit, or None when git is missing or fails."""
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):  # git missing, not runnable or too slow
+        return None
+    out = r.stdout.strip()
+    return out if r.returncode == 0 and out else None
+
+
+def run_settings(cfg: Config) -> dict:
+    """The settings a run used, recorded at the top of results.json so runs can be compared later."""
+    return {
+        "planner_model": cfg.planner_model,
+        "planner_effort": cfg.planner_effort,
+        "coder_model": cfg.coder_model,
+        "coder_effort": cfg.coder_effort,
+        "reviewer_model": cfg.reviewer_model,
+        "reviewer_effort": cfg.reviewer_effort,
+        "lights_out_commit": _git_commit(),
+        "repeat": 1,
+        "max_usd": None,
+    }
+
+
 def _flag(ok: bool | None) -> str:
     return "n/a" if ok is None else ("pass" if ok else "fail")
 
@@ -237,7 +268,15 @@ async def run_eval(
         "cost_usd": round(sum(r.cost_usd for r in results), 4),
         "duration_s": round(sum(r.duration_s for r in results), 1),
     }
-    data = {"started_at": started_at, "tasks": [asdict(r) for r in results], "total": total, "stopped": stopped}
+    settings = run_settings(cfg)
+    settings["repeat"], settings["max_usd"] = repeat, max_usd
+    data = {
+        "settings": settings,
+        "started_at": started_at,
+        "tasks": [asdict(r) for r in results],
+        "total": total,
+        "stopped": stopped,
+    }
     if stopped:
         print(f"Stopped: {stopped} (${total['cost_usd']:.2f} spent, limit ${max_usd:.2f})", file=out)
     print(

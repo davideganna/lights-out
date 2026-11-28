@@ -24,6 +24,12 @@ All notable changes to lights-out are documented here. The format follows
   `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) repository secret, uploads the results as an artifact, appends
   the report to the job summary, posts or updates one PR comment, and fails on a regression against
   `eval/baseline.json`. `eval/RESULTS.md` is a placeholder for published results, committed by a human.
+- Evaluation: `lights-out eval-report RESULTS [RESULTS ...] [--baseline BASELINE] [--markdown OUT.md]` turns
+  `results.json` files into metrics (success rate overall and per category, implementation success, false needs_info
+  and false proceed rates, cost, time, fix and review rounds, per-task pass rates with `--repeat`), compares them
+  with a baseline and exits 1 on a regression (success rate down or false proceed rate up by more than 10 points).
+  `results.json` now starts with a `settings` block (models, efforts, lights-out commit, repeat, max USD) and
+  `lights-out eval` prints the summary and writes `report.md` next to it.
 - Config file: an optional `lights-out.yaml` (path in `LIGHTS_OUT_CONFIG`) holds every non-secret setting, with
   `lists:` for the Trello column names and `repos:` for the label → repository mapping. An environment variable
   wins over the file, and the file over the built-in default, so `.env`-only setups work unchanged. Secrets in

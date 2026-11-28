@@ -221,3 +221,24 @@ def test_eval_without_eval_dir_is_exit_2(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
     assert main(["eval"]) == 2
     assert "not found" in capsys.readouterr().err
+
+
+async def test_results_json_starts_with_settings(tmp_path, sample, cfg):
+    await run_eval([make_task(tmp_path)], cfg, sample, repeat=2, agents_factory=factory(), out=io.StringIO())
+    data = json.loads((cfg.data_dir / "results.json").read_text())
+    assert next(iter(data)) == "settings"
+    s = data["settings"]
+    assert s["planner_model"] == cfg.planner_model and s["planner_effort"] == cfg.planner_effort
+    assert s["coder_model"] == cfg.coder_model and s["reviewer_model"] == cfg.reviewer_model
+    assert s["repeat"] == 2
+    assert {"started_at", "tasks", "total", "stopped"} <= set(data)
+
+
+def test_commit_is_none_when_git_fails(cfg, monkeypatch):
+    from lights_out.eval import runner
+
+    def boom(*a, **k):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(runner.subprocess, "run", boom)
+    assert runner.run_settings(cfg)["lights_out_commit"] is None
