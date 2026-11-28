@@ -9,7 +9,8 @@ from lights_out import cli
 from lights_out.agents import agents
 from lights_out.agents.agents import AgentError, check_claude
 from lights_out.core.config import Config
-from lights_out.integrations.github import BranchProtection
+from lights_out.integrations.github import BranchProtection, GitHubError
+from lights_out.integrations.github_auth import GitHubAppTokenProvider, StaticTokenProvider
 
 
 @pytest.fixture
@@ -262,3 +263,115 @@ def test_test_alert_success_failure_and_missing_url(cfg, capsys):
     assert fake.posted == ["lights-out: test alert"] and "Test alert sent." in capsys.readouterr().out
     assert cli.cmd_test_alert(cfg, _PostAlerter(False)) == 1
     assert "FAILED" in capsys.readouterr().out
+
+
+# --- GitHub auth modes -------------------------------------------------------------------------
+
+
+class FakeAppProvider(GitHubAppTokenProvider):
+    def __init__(self, installed=("o/app",), perms=None, slug_error=None):
+        self.app_id = "77"
+        self._installed = set(installed)
+        self._perms = perms if perms is not None else {"contents": "write"}
+        self._slug_error = slug_error
+        self.identity_calls = 0
+
+    def slug(self):
+        if self._slug_error:
+            raise GitHubError(self._slug_error)
+        return "my-bot"
+
+    def is_installed(self, repo):
+        return repo in self._installed
+
+    def permissions(self, repo):
+        return self._perms
+
+    def token_for(self, repo):
+        return "ghs_x"
+
+    def bot_identity(self):
+        self.identity_calls += 1
+        return "my-bot[bot]", "1+my-bot[bot]@users.noreply.github.com"
+
+
+def test_doctor_personal_token(monkeypatch, cfg, capsys):
+    monkeypatch.setattr(cli, "check_claude", lambda c: "m")
+    assert cli.cmd_doctor(cfg, StaticTokenProvider("t")) == 0
+    assert "GitHub auth: personal token" in capsys.readouterr().out
+
+
+def test_doctor_app_installed_runs_branch_protection(monkeypatch, cfg, capsys):
+    monkeypatch.setattr(cli, "check_claude", lambda c: "m")
+    assert cli.cmd_doctor(cfg, FakeAppProvider()) == 0
+    out = capsys.readouterr().out
+    assert "GitHub auth: App my-bot (id 77)" in out
+    assert "push=True" in out and "branch protection: OK" in out
+
+
+def test_doctor_app_not_installed(monkeypatch, cfg, capsys):
+    monkeypatch.setattr(cli, "check_claude", lambda c: "m")
+    assert cli.cmd_doctor(cfg, FakeAppProvider(installed=())) == 1
+    out = capsys.readouterr().out
+    assert "o/app App not installed" in out and "branch protection" not in out
+
+
+def test_doctor_app_without_contents_write(monkeypatch, cfg, capsys):
+    monkeypatch.setattr(cli, "check_claude", lambda c: "m")
+    assert cli.cmd_doctor(cfg, FakeAppProvider(perms={"contents": "read"})) == 1
+    assert "App cannot push to this repository (Contents: write missing)" in capsys.readouterr().out
+
+
+def test_doctor_app_slug_failure(monkeypatch, cfg, capsys):
+    monkeypatch.setattr(cli, "check_claude", lambda c: "m")
+    assert cli.cmd_doctor(cfg, FakeAppProvider(slug_error="401")) == 1
+    assert "GitHub auth: App FAILED: 401" in capsys.readouterr().out
+
+
+def test_doctor_warns_about_group_readable_key(monkeypatch, cfg, tmp_path, capsys):
+    monkeypatch.setattr(cli, "check_claude", lambda c: "m")
+    key = tmp_path / "k.pem"
+    key.write_text("x")
+    key.chmod(0o640)
+    cfg.github_app_private_key_file = str(key)
+    assert cli.cmd_doctor(cfg, FakeAppProvider()) == 0
+    assert "group or others" in capsys.readouterr().out
+    key.chmod(0o600)
+    cli.cmd_doctor(cfg, FakeAppProvider())
+    assert "group or others" not in capsys.readouterr().out
+
+
+def test_bot_author_applied_when_not_configured(cfg):
+    p = FakeAppProvider()
+    cli.apply_bot_author(cfg, p)
+    assert (cfg.git_author_name, cfg.git_author_email) == ("my-bot[bot]", "1+my-bot[bot]@users.noreply.github.com")
+
+
+def test_bot_author_kept_when_configured(cfg):
+    cfg.git_author_configured = True
+    p = FakeAppProvider()
+    cli.apply_bot_author(cfg, p)
+    assert cfg.git_author_name == "lights-out" and p.identity_calls == 0
+
+
+def test_bot_author_not_used_with_personal_token(cfg):
+    cli.apply_bot_author(cfg, StaticTokenProvider("t"))
+    assert cfg.git_author_name == "lights-out"
+
+
+def test_bot_author_failure_returns_false(cfg, capsys):
+    class Broken(FakeAppProvider):
+        def bot_identity(self):
+            raise GitHubError("boom")
+
+    assert cli._set_bot_author(cfg, Broken()) is False
+    assert "GitHub App error: boom" in capsys.readouterr().err
+
+
+def test_bot_author_malformed_response_returns_false(cfg, capsys):
+    class Malformed(FakeAppProvider):
+        def bot_identity(self):
+            return {}["id"]
+
+    assert cli._set_bot_author(cfg, Malformed()) is False
+    assert "GitHub App error" in capsys.readouterr().err

@@ -220,7 +220,7 @@ def test_config_command_bad_file_exits_2(env, tmp_path, capsys):
 
 def test_effective_settings_covers_every_field(env):
     keys = {k for k, _, _ in effective_settings({})}
-    expected = {f.name for f in fields(Config)} - {"repo_labels", "lists"} | {"repos"}
+    expected = {f.name for f in fields(Config)} - {"repo_labels", "lists", "git_author_configured"} | {"repos"}
     expected = {k for k in expected if k not in FILE_SECRET_KEYS}
     assert expected <= keys
 
@@ -241,8 +241,17 @@ def test_example_file(env):
             "default_repo",
             "data_dir",
             "agent_user",
+            "git_author_configured",  # derived: the example file does set the author
         ):
             continue
         assert getattr(cfg, f.name) == getattr(default, f.name), f.name
     assert cfg.human_review_paths == list(DEFAULT_HUMAN_REVIEW_PATHS)
     assert cfg.repo_labels == {"my-app": "your-org/my-app"}
+
+
+def test_github_app_id_in_file_is_a_secret_error(env, tmp_path):
+    path = tmp_path / "c.yaml"
+    path.write_text("github_app_id: '1'\n")
+    env.setenv("LIGHTS_OUT_CONFIG", str(path))
+    with pytest.raises(ConfigError, match="move it to .env"):
+        load()

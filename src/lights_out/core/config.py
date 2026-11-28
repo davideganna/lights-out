@@ -15,7 +15,14 @@ from .routing import is_repo, parse_repo_labels
 # Secrets the orchestrator needs but the coding agent must never see. They are
 # removed from os.environ after loading, because the Claude Code subprocess
 # inherits os.environ.
-_ORCHESTRATOR_SECRETS = ("GITHUB_TOKEN", "TRELLO_API_KEY", "TRELLO_TOKEN", "ALERT_WEBHOOK_URL")
+_ORCHESTRATOR_SECRETS = (
+    "GITHUB_TOKEN",
+    "GITHUB_APP_ID",
+    "GITHUB_APP_PRIVATE_KEY_FILE",
+    "TRELLO_API_KEY",
+    "TRELLO_TOKEN",
+    "ALERT_WEBHOOK_URL",
+)
 
 # Kinds of alert lights-out can send (ALERT_EVENTS picks a subset).
 ALERT_EVENT_NAMES: tuple[str, ...] = ("failed", "pr_open", "needs_info", "budget", "lifecycle", "error")
@@ -188,11 +195,21 @@ class Config:
     agent_user: str = ""  # run Claude + checks as this OS user (set in Docker)
     git_author_name: str = "lights-out"
     git_author_email: str = "lights-out@users.noreply.github.com"
+    # True when GIT_AUTHOR_NAME or GIT_AUTHOR_EMAIL was set (env or file); otherwise an App uses its bot identity
+    git_author_configured: bool = False
     report_port: int = 8080
 
     # Alerts: POST {"text": ...} to this URL (secret; empty = off) for the listed events
     alert_webhook_url: str = field(default="", repr=False)
     alert_events: list[str] = field(default_factory=lambda: list(ALERT_EVENT_NAMES))
+
+    # GitHub App (instead of github_token): both are secrets
+    github_app_id: str = ""
+    github_app_private_key_file: str = field(default="", repr=False)
+
+    @property
+    def uses_github_app(self) -> bool:
+        return bool(self.github_app_id and self.github_app_private_key_file)
 
     @property
     def workspaces_dir(self) -> Path:
@@ -221,9 +238,29 @@ class Config:
     @classmethod
     def from_env(cls, *, scrub_secrets: bool = True) -> Config:
         env = os.environ
-        values = {k: v for k, (v, _src) in _resolve(env).items()}
-        for name in ("TRELLO_API_KEY", "TRELLO_TOKEN", "GITHUB_TOKEN"):
+        resolved = _resolve(env)
+        values = {k: v for k, (v, _src) in resolved.items()}
+        for name in ("TRELLO_API_KEY", "TRELLO_TOKEN"):
             _get(name, required=True)
+        app_id = _get("GITHUB_APP_ID").strip()
+        key_file = _get("GITHUB_APP_PRIVATE_KEY_FILE").strip()
+        if bool(app_id) != bool(key_file):
+            missing = "GITHUB_APP_PRIVATE_KEY_FILE" if app_id else "GITHUB_APP_ID"
+            raise ConfigError(
+                f"GitHub App needs both GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_FILE; {missing} is missing"
+            )
+        if app_id:
+            if _get("GITHUB_TOKEN"):
+                raise ConfigError(
+                    "Set either GITHUB_TOKEN or GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY_FILE, not both; pick one"
+                )
+            if not Path(key_file).is_file():
+                raise ConfigError("GITHUB_APP_PRIVATE_KEY_FILE does not point to an existing file")
+        else:
+            _get("GITHUB_TOKEN", required=True)
+        values["git_author_configured"] = (
+            resolved["git_author_name"][1] != "default" or resolved["git_author_email"][1] != "default"
+        )
         if not values["trello_board_id"]:
             raise ConfigError(
                 "Missing required environment variable TRELLO_BOARD_ID (or trello_board_id in lights-out.yaml)"
@@ -236,6 +273,8 @@ class Config:
             repo_labels=values["repos"],
             lists=Lists(**{n: values[f"lists.{n}"] for n in Lists().__dict__}),
             alert_webhook_url=_get("ALERT_WEBHOOK_URL").strip(),
+            github_app_id=app_id,
+            github_app_private_key_file=key_file,
             **simple,
         )
         if os.environ.get("GITHUB_REPO"):
@@ -263,6 +302,8 @@ class Config:
 DEFAULT_CONFIG_FILE = "lights-out.yaml"
 FILE_SECRET_KEYS = (
     "github_token",
+    "github_app_id",
+    "github_app_private_key_file",
     "trello_api_key",
     "trello_token",
     "alert_webhook_url",
@@ -310,6 +351,8 @@ _SETTINGS: tuple[tuple[str, object, str], ...] = (
 
 _DISPLAY_SECRETS = (
     "GITHUB_TOKEN",
+    "GITHUB_APP_ID",
+    "GITHUB_APP_PRIVATE_KEY_FILE",
     "TRELLO_API_KEY",
     "TRELLO_TOKEN",
     "ALERT_WEBHOOK_URL",
@@ -320,7 +363,7 @@ _DISPLAY_SECRETS = (
 
 def valid_file_keys() -> list[str]:
     """Top-level keys allowed in the file, derived from the Config fields."""
-    skip = set(FILE_SECRET_KEYS) | {"repo_labels"}
+    skip = set(FILE_SECRET_KEYS) | {"repo_labels", "git_author_configured"}
     return sorted({f.name for f in fields(Config) if f.name not in skip} | {"repos"})
 
 

@@ -5,15 +5,19 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+
+import httpx
 
 from .agents.agents import ClaudeAgents, check_claude
 from .core.config import Config, ConfigError, effective_settings
 from .core.routing import Route
 from .integrations.alerts import Alerter
-from .integrations.github import GitHubClient
+from .integrations.github import GitHubClient, GitHubError
+from .integrations.github_auth import GitHubAppTokenProvider, TokenProvider, provider_from_config
 from .integrations.trello import TrelloClient
 from .orchestration.followup import PRWatcher
 from .orchestration.health import Heartbeat
@@ -23,20 +27,42 @@ from .orchestration.workspace import Workspace, bootstrap_repository
 from .reporting.report import write_reports
 from .reporting.store import Store
 
+# What a GitHub or GitHub App call can raise: API and transport errors, malformed responses, a bad key.
+_GITHUB_ERRORS = (GitHubError, httpx.HTTPError, KeyError, ValueError)
 
-def _workspace(cfg: Config, name: str, route: Route) -> Workspace:
+
+def _workspace(cfg: Config, name: str, route: Route, provider: TokenProvider) -> Workspace:
     return Workspace(
         cfg.workspaces_dir / name,
         repo_url=route.url,
         base_branch=cfg.base_branch,
-        github_token=cfg.github_token,
+        github_token=lambda: provider.token_for(route.repo),
         agent_user=cfg.agent_user,
         author_name=cfg.git_author_name,
         author_email=cfg.git_author_email,
     )
 
 
-def build(cfg: Config) -> tuple[TrelloClient, Store, Scheduler]:
+def _github_factory(provider: TokenProvider):
+    return lambda repo: GitHubClient(lambda: provider.token_for(repo), repo)
+
+
+def apply_bot_author(cfg: Config, provider: TokenProvider) -> None:
+    """With a GitHub App and no GIT_AUTHOR_* setting, commit as the App's bot user."""
+    if isinstance(provider, GitHubAppTokenProvider) and not cfg.git_author_configured:
+        cfg.git_author_name, cfg.git_author_email = provider.bot_identity()
+
+
+def _set_bot_author(cfg: Config, provider: TokenProvider) -> bool:
+    try:
+        apply_bot_author(cfg, provider)
+    except _GITHUB_ERRORS as e:
+        print(f"GitHub App error: {e}", file=sys.stderr)
+        return False
+    return True
+
+
+def build(cfg: Config, provider: TokenProvider) -> tuple[TrelloClient, Store, Scheduler]:
     trello = TrelloClient(cfg.trello_api_key, cfg.trello_token, cfg.trello_board_id)
     store = Store(cfg.db_path)
     alerter = Alerter(cfg.alert_webhook_url, cfg.alert_events)
@@ -44,16 +70,14 @@ def build(cfg: Config) -> tuple[TrelloClient, Store, Scheduler]:
     pipeline = Pipeline(
         cfg,
         trello,
-        github_factory=lambda repo: GitHubClient(cfg.github_token, repo),
+        github_factory=_github_factory(provider),
         store=store,
         agents_factory=lambda transcript_dir, budget: ClaudeAgents(cfg, transcript_dir, budget),
-        workspace_factory=lambda t, route: _workspace(cfg, t.id, route),
+        workspace_factory=lambda t, route: _workspace(cfg, t.id, route, provider),
         alerter=alerter,
         heartbeat=heartbeat,
     )
-    watcher = PRWatcher(
-        cfg, trello, store, lambda repo: GitHubClient(cfg.github_token, repo), revise=pipeline.revise, alerter=alerter
-    )
+    watcher = PRWatcher(cfg, trello, store, _github_factory(provider), revise=pipeline.revise, alerter=alerter)
     return trello, store, Scheduler(cfg, trello, store, pipeline, heartbeat, alerter=alerter, pr_watcher=watcher)
 
 
@@ -119,8 +143,52 @@ def _doctor_branch_protection(github: GitHubClient, branch: str) -> bool:
     return ok
 
 
-def cmd_doctor(cfg: Config) -> int:
+def _doctor_key_file_warnings(cfg: Config) -> None:
+    try:
+        st = os.stat(cfg.github_app_private_key_file)
+    except OSError:
+        return
+    if st.st_mode & 0o077:
+        print(
+            f"GitHub App key: WARNING: {cfg.github_app_private_key_file} is accessible to group or others; "
+            "chmod 600 it so the agent user can't read it"
+        )
+    if cfg.agent_user:
+        try:
+            import pwd
+
+            if pwd.getpwnam(cfg.agent_user).pw_uid == st.st_uid:
+                print(
+                    f"GitHub App key: WARNING: {cfg.github_app_private_key_file} is owned by {cfg.agent_user}; "
+                    "chown it to root so the agent can't read it"
+                )
+        except (KeyError, ImportError):
+            pass
+
+
+def _doctor_app_repo(provider: GitHubAppTokenProvider, label: str, repo_name: str, branch: str) -> bool:
+    """App-mode checks for one repository; return False on a problem."""
+    try:
+        if not provider.is_installed(repo_name):
+            print(f"GitHub [{label}]: {repo_name} App not installed")
+            return False
+        github = GitHubClient(lambda: provider.token_for(repo_name), repo_name)
+        repo = github._req("GET", f"/repos/{repo_name}")
+        can_push = provider.permissions(repo_name).get("contents") == "write"
+        print(f"GitHub [{label}]: {repo['full_name']} (push={can_push}, default={repo['default_branch']})")
+        ok = True
+        if not can_push:
+            ok = False
+            print("  App cannot push to this repository (Contents: write missing)")
+        return _doctor_branch_protection(github, branch) and ok
+    except _GITHUB_ERRORS as e:
+        print(f"GitHub [{label}]: {repo_name} FAILED: {e}")
+        return False
+
+
+def cmd_doctor(cfg: Config, provider: TokenProvider | None = None) -> int:
     ok = True
+    provider = provider or provider_from_config(cfg)
     trello = TrelloClient(cfg.trello_api_key, cfg.trello_token, cfg.trello_board_id)
     try:
         names = trello.list_ids(refresh=True)
@@ -132,8 +200,21 @@ def cmd_doctor(cfg: Config) -> int:
     except Exception as e:  # noqa: BLE001
         ok = False
         print(f"Trello: FAILED: {e}")
+    app = provider if isinstance(provider, GitHubAppTokenProvider) else None
+    if app is None:
+        print("GitHub auth: personal token")
+    else:
+        try:
+            print(f"GitHub auth: App {app.slug()} (id {app.app_id})")
+        except _GITHUB_ERRORS as e:
+            ok = False
+            print(f"GitHub auth: App FAILED: {e}")
+        _doctor_key_file_warnings(cfg)
     for label, repo_name in _targets(cfg):
-        github = GitHubClient(cfg.github_token, repo_name)
+        if app is not None:
+            ok = _doctor_app_repo(app, label, repo_name, cfg.base_branch) and ok
+            continue
+        github = _github_factory(provider)(repo_name)
         try:
             repo = github._req("GET", f"/repos/{repo_name}")
             perms = repo.get("permissions", {})
@@ -249,8 +330,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Configuration error: {e}", file=sys.stderr)
         return 2
 
+    try:
+        provider = provider_from_config(cfg)
+    except OSError as e:
+        print(f"Configuration error: cannot read the GitHub App key: {e.strerror}", file=sys.stderr)
+        return 2
     if args.command == "doctor":
-        return cmd_doctor(cfg)
+        return cmd_doctor(cfg, provider)
     if args.command == "test-alert":
         return cmd_test_alert(cfg)
     if args.command == "setup-board":
@@ -266,11 +352,15 @@ def main(argv: list[str] | None = None) -> int:
         except ConfigError as e:
             print(f"Configuration error: {e}", file=sys.stderr)
             return 2
-        done = bootstrap_repository(_workspace(cfg, "_bootstrap", route))
+        if not _set_bot_author(cfg, provider):
+            return 2
+        done = bootstrap_repository(_workspace(cfg, "_bootstrap", route, provider))
         print("Pushed the initial commit." if done else "Repository already has commits; nothing to do.")
         return 0
 
-    trello, store, scheduler = build(cfg)
+    if args.command in ("run", "run-once") and not _set_bot_author(cfg, provider):
+        return 2
+    trello, store, scheduler = build(cfg, provider)
     if args.command == "report":
         print(write_reports(store, cfg.reports_dir, datetime.now().date().isoformat(), runs_dir=cfg.runs_dir))
         return 0

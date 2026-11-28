@@ -74,7 +74,8 @@ later, a webhook can replace the poll.
 ### Merging held PRs
 
 A PR held for human approval (or left open after a CI problem) is followed up by lights-out. GitHub doesn't let
-an author approve their own PR and lights-out opens PRs with the owner's token, so approval is a comment:
+an author approve their own PR and lights-out opens PRs with the owner's personal token (with a [GitHub App](#using-a-github-app) the bot is the
+author, so a review works too), approval can be a comment:
 
 - Comment exactly `/lights-out merge` (surrounding whitespace is ignored) on the PR. It counts only if it was
   posted after the PR's latest commit by a user with write, maintain or admin access to the repository.
@@ -175,6 +176,7 @@ in `REPO_LABELS` and `DEFAULT_REPO`:
      *Workflows* set to read/write and *Checks* set to read. Optionally add *Actions* set to read so CI
      failure logs can be sent to the coder (without it only check summaries are available), and
      *Administration* set to read so `doctor` can verify branch protection (without it, `doctor` only warns).
+   - Or, instead of a personal token, a GitHub App: see [Using a GitHub App](#using-a-github-app).
    - `TRELLO_BOARD_ID`: the board whose *Queued* column drives the work.
 2. Build and check: `docker compose build && docker compose run --rm lights-out doctor`
    (`doctor` also checks the Claude credentials with a tiny real request, well under one cent)
@@ -184,6 +186,28 @@ in `REPO_LABELS` and `DEFAULT_REPO`:
    and a `CLAUDE.md` with conventions): `docker compose run --rm lights-out bootstrap <label>`
 5. Start it: `docker compose up -d`. From then on, moving a card to **Queued** starts the agent.
    (`docker compose run --rm lights-out run-once` processes what's queued now and exits.)
+
+## Using a GitHub App
+
+Instead of a personal token, lights-out can act as a GitHub App: it gets its own identity (`<app-slug>[bot]`),
+permissions scoped per repository and short-lived tokens, and it isn't tied to a person.
+
+1. Create the App: GitHub → Settings → Developer settings → GitHub Apps → New GitHub App. No webhook is needed
+   (untick "Active").
+2. Repository permissions: Contents read/write, Pull requests read/write, Checks read, Actions read, Commit
+   statuses read, Administration read (for the branch-protection check in `doctor`), Metadata read, and
+   Workflows read/write (without it `bootstrap` and any change under `.github/workflows` can't be pushed).
+3. Generate a private key and download the `.pem`. On the host run `chown root:root github-app.pem` and
+   `chmod 600 github-app.pem` so the agent user can't read it.
+4. Mount it read-only (see the commented line in `docker-compose.yml`) and set, without `GITHUB_TOKEN`:
+   `GITHUB_APP_ID=<id>` and `GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/github-app.pem`. Setting only one of the two,
+   or the App together with `GITHUB_TOKEN`, is a config error.
+5. Install the App on every repository in `REPO_LABELS`/`DEFAULT_REPO`, then run `lights-out doctor`. It shows
+   the App's slug, whether it is installed on each repository, and the usual push and branch-protection checks.
+
+Commits are authored as `<slug>[bot]` unless `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` are set. Because the bot is
+the PR author, a human's approving review on the PR also merges it via the PR watcher (see
+[Merging held PRs](#merging-held-prs)).
 
 ## Configuration file
 
@@ -198,7 +222,7 @@ path is fine; a missing file at an explicit `LIGHTS_OUT_CONFIG` is a config erro
 - `allowed_members`, `human_review_paths` and `alert_events` are YAML lists.
 - **Precedence:** an environment variable, if set (even empty), wins over the file, and the file wins over
   the built-in default. Existing `.env`-only setups keep working unchanged.
-- **Secrets never go in the file:** `GITHUB_TOKEN`, `TRELLO_API_KEY`, `TRELLO_TOKEN`, `ALERT_WEBHOOK_URL`,
+- **Secrets never go in the file:** `GITHUB_TOKEN`, `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_FILE`, `TRELLO_API_KEY`, `TRELLO_TOKEN`, `ALERT_WEBHOOK_URL`,
   `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` in the file are a config error; keep them in `.env`.
 - Unknown keys (the error lists the valid ones) and wrong types (the error names the key) are config
   errors. Strings are strict: quote numbers that should be text.

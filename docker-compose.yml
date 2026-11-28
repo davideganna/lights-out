@@ -4,6 +4,8 @@ services:
     env_file: .env
     volumes:
       - agent-data:/data
+      # GitHub App private key (see README "Using a GitHub App"):
+      # - ./github-app.pem:/run/secrets/github-app.pem:ro
       # Compose can't make a bind mount optional (a missing source becomes a directory), so enable this
       # line once ./lights-out.yaml exists:
       # - ./lights-out.yaml:/app/lights-out.yaml:ro

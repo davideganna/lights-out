@@ -62,7 +62,7 @@ class BranchProtection:
 class GitHubClient:
     def __init__(
         self,
-        token: str,
+        token: str | Callable[[], str],
         repo: str,
         *,
         http: httpx.Client | None = None,
@@ -70,20 +70,24 @@ class GitHubClient:
         clock: Callable[[], float] = time.monotonic,
     ):
         self.repo = repo
+        self._token = (lambda: token) if isinstance(token, str) else token
         self._sleep = sleep
         self._clock = clock
         self._http = http or httpx.Client(
             base_url="https://api.github.com",
             timeout=30,
             headers={
-                "Authorization": f"Bearer {token}",
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
 
+    def _auth(self) -> dict[str, str]:
+        # Asked on every request so a long card never uses an expired App token.
+        return {"Authorization": f"Bearer {self._token()}"}
+
     def _req(self, method: str, path: str, **kw):
-        r = self._http.request(method, path, **kw)
+        r = self._http.request(method, path, headers=self._auth(), **kw)
         if r.status_code >= 400:
             raise GitHubError(f"GitHub {method} {path} -> {r.status_code}: {r.text[:300]}", status=r.status_code)
         return r.json() if r.content else None
@@ -202,7 +206,10 @@ class GitHubClient:
                 try:
                     # The log endpoint redirects to another host; httpx drops Authorization there.
                     r = self._http.request(
-                        "GET", f"/repos/{self.repo}/actions/jobs/{run['id']}/logs", follow_redirects=True
+                        "GET",
+                        f"/repos/{self.repo}/actions/jobs/{run['id']}/logs",
+                        headers=self._auth(),
+                        follow_redirects=True,
                     )
                     if r.status_code == 200:
                         out.append((run["name"], r.text[-LOG_CHARS:]))
@@ -256,7 +263,7 @@ class GitHubClient:
 
     def _get_raw(self, path: str, **kw) -> httpx.Response:
         """GET without raising on error statuses (callers map 403/404 themselves)."""
-        return self._http.request("GET", path, **kw)
+        return self._http.request("GET", path, headers=self._auth(), **kw)
 
     def branch_protection(self, branch: str) -> BranchProtection:
         """Read classic branch protection and active rulesets for a branch and combine them."""
