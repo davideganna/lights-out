@@ -228,7 +228,7 @@ def make(cfg, origin, agents, github, ticket=TICKET, alerter=None, **pipe_kw):
         trello,
         github_factory=github_factory,
         store=store,
-        agents_factory=lambda d, budget: agents,
+        agents_factory=lambda d, budget, c: agents,
         workspace_factory=workspace_factory,
         alerter=alerter,
         **pipe_kw,
@@ -1079,3 +1079,86 @@ async def test_unexpected_error_in_a_revision_still_finishes_the_run(cfg, origin
     assert last.status == "pr_open" and "something unexpected" in last.error
     assert store.running() == []
     assert "something unexpected" in gh.pr_comments[-1][1]
+
+
+# --- per-repository settings ---------------------------------------------------------------------
+SITE_TICKET = Ticket(
+    id="card2", short_id="13", title="Site feature", description="Please.", url="https://trello.com/c/y",
+    labels=["Site"],
+)  # fmt: skip
+
+
+async def test_repo_overrides_apply_to_the_cards_repository(cfg, origin, tmp_path):
+    marker = tmp_path / "site-check-ran"
+    cfg.repo_overrides = {
+        "o/site": {
+            "base_branch": "develop",
+            "check_command": f"grep -qx ok feature.txt && touch {marker}",
+            "human_review_paths": ["feature.txt"],
+        }
+    }
+    gh = FakeGitHub("success")
+    pipe, *_ = make(cfg, origin, FakeAgents(), gh, ticket=SITE_TICKET)
+    out = await pipe.process(SITE_TICKET, "n", budget_usd=10)
+    assert out.status == "pr_open" and "needs human approval" in out.error
+    assert gh.prs[0]["base"] == "develop" and not gh.merged
+    assert marker.exists()
+    assert cfg.base_branch == "main" and cfg.check_command == "grep -qx ok feature.txt"
+
+
+async def test_other_repository_keeps_global_settings(cfg, origin, tmp_path):
+    marker = tmp_path / "site-check-ran"
+    cfg.repo_overrides = {
+        "o/site": {"base_branch": "develop", "check_command": f"touch {marker}", "human_review_paths": ["feature.txt"]}
+    }
+    gh = FakeGitHub("success")
+    pipe, *_ = make(cfg, origin, FakeAgents(), gh)
+    out = await pipe.process(TICKET, "n", budget_usd=10)
+    assert out.status == "merged", out.error
+    assert gh.prs[0]["base"] == "main" and not marker.exists()
+
+
+async def test_merge_without_ci_override_is_per_repository(cfg, origin):
+    cfg.repo_overrides = {"o/site": {"merge_without_ci": True}}
+    gh_site = FakeGitHub("none")
+    pipe, *_ = make(cfg, origin, FakeAgents(), gh_site, ticket=SITE_TICKET)
+    assert (await pipe.process(SITE_TICKET, "n", budget_usd=10)).status == "merged"
+    gh_app = FakeGitHub("none")
+    pipe2, *_ = make(cfg, origin, FakeAgents(), gh_app)
+    assert (await pipe2.process(TICKET, "n2", budget_usd=10)).status == "pr_open"
+
+
+@pytest.mark.parametrize("given, expected", [(10, 3), (2, 2)])
+async def test_repo_ticket_budget(cfg, origin, given, expected):
+    cfg.repo_overrides = {"o/site": {"max_ticket_usd": 3.0}}
+    budgets: list[float] = []
+    agents = FakeAgents()
+
+    def factory(d, budget, c):
+        budgets.append(budget)
+        return agents
+
+    pipe, *_ = make(cfg, origin, agents, FakeGitHub("success"), ticket=SITE_TICKET)
+    pipe.agents_factory = factory
+    await pipe.process(SITE_TICKET, "n", budget_usd=given)
+    assert budgets[-1] == expected
+
+
+async def test_agents_are_built_from_the_routed_repository_config(cfg, origin):
+    cfg.repo_overrides = {"o/site": {"check_command": "npm run check"}}
+    seen: list[str] = []
+    agents = FakeAgents()
+
+    def factory(d, budget, c):
+        seen.append(c.check_command)
+        return agents
+
+    pipe, *_ = make(cfg, origin, agents, FakeGitHub("success"), ticket=SITE_TICKET)
+    pipe.agents_factory = factory
+    await pipe.process(SITE_TICKET, "n", budget_usd=10)
+    assert seen[-1] == "npm run check"
+    seen.clear()
+    pipe2, *_ = make(cfg, origin, agents, FakeGitHub("success"))
+    pipe2.agents_factory = factory
+    await pipe2.process(TICKET, "n2", budget_usd=10)
+    assert seen[-1] == "grep -qx ok feature.txt"

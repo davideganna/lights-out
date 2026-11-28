@@ -135,7 +135,7 @@ class Scheduler:
         if card is None:
             return False
         log.info("Picked up card #%s: %s", card.short_id, card.title)
-        outcome = await self.pipeline.process(card, day, budget_usd=min(self.cfg.max_ticket_usd, left))
+        outcome = await self.pipeline.process(card, day, budget_usd=left)
         log.info("Card #%s → %s", card.short_id, outcome.status)
         write_reports(self.store, self.cfg.reports_dir, day, runs_dir=self.cfg.runs_dir)
         return True

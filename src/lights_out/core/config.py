@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import TypeGuard
+from typing import Any, TypeGuard
 
 import yaml
 
@@ -50,6 +51,18 @@ DEFAULT_HUMAN_REVIEW_PATHS: tuple[str, ...] = (
     "**/*auth*.py",
 )
 
+
+# The only settings a `repos:` entry in lights-out.yaml may override for one repository.
+REPO_OVERRIDE_KEYS: tuple[str, ...] = (
+    "base_branch",
+    "check_command",
+    "check_timeout_s",
+    "ci_timeout_s",
+    "human_review_paths",
+    "max_auto_merge_lines",
+    "max_ticket_usd",
+    "merge_without_ci",
+)
 
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 
@@ -156,6 +169,8 @@ class Config:
     default_repo: str = ""  # used for cards with no repository label; empty = ask for a label
     base_branch: str = "main"
     lists: Lists = field(default_factory=Lists)
+    # "owner/repo" -> {setting: value} from `repos:` mapping entries (see REPO_OVERRIDE_KEYS)
+    repo_overrides: dict[str, dict[str, object]] = field(default_factory=dict)
 
     # Models
     planner_model: str = "claude-opus-5-5"
@@ -235,11 +250,20 @@ class Config:
             "reviewer": f"{self.reviewer_model}/{self.reviewer_effort or 'default'}",
         }
 
+    def for_repo(self, repo: str) -> Config:
+        """This config with the repository's overrides applied (self if it has none)."""
+        overrides = self.repo_overrides.get(repo)
+        if not overrides:
+            return self
+        copied: dict[str, Any] = {k: list(v) if isinstance(v, list) else v for k, v in overrides.items()}
+        return dataclasses.replace(self, **copied)
+
     @classmethod
     def from_env(cls, *, scrub_secrets: bool = True) -> Config:
         env = os.environ
         resolved = _resolve(env)
         values = {k: v for k, (v, _src) in resolved.items()}
+        overrides = {} if "REPO_LABELS" in env else _file_repo_overrides(env)
         for name in ("TRELLO_API_KEY", "TRELLO_TOKEN"):
             _get(name, required=True)
         app_id = _get("GITHUB_APP_ID").strip()
@@ -265,12 +289,13 @@ class Config:
             raise ConfigError(
                 "Missing required environment variable TRELLO_BOARD_ID (or trello_board_id in lights-out.yaml)"
             )
-        simple = {k: v for k, v in values.items() if k not in ("repos",) and not k.startswith("lists.")}
+        simple = {k: v for k, v in values.items() if k != "repos" and not k.startswith("lists.")}
         cfg = cls(
             trello_api_key=_get("TRELLO_API_KEY"),
             trello_token=_get("TRELLO_TOKEN"),
             github_token=_get("GITHUB_TOKEN"),
             repo_labels=values["repos"],
+            repo_overrides=overrides,
             lists=Lists(**{n: values[f"lists.{n}"] for n in Lists().__dict__}),
             alert_webhook_url=_get("ALERT_WEBHOOK_URL").strip(),
             github_app_id=app_id,
@@ -363,7 +388,7 @@ _DISPLAY_SECRETS = (
 
 def valid_file_keys() -> list[str]:
     """Top-level keys allowed in the file, derived from the Config fields."""
-    skip = set(FILE_SECRET_KEYS) | {"repo_labels", "git_author_configured"}
+    skip = set(FILE_SECRET_KEYS) | {"repo_labels", "repo_overrides", "git_author_configured"}
     return sorted({f.name for f in fields(Config) if f.name not in skip} | {"repos"})
 
 
@@ -438,18 +463,65 @@ def _from_file(key: str, kind: str, value: object, path: Path | None) -> object:
             return parse_alert_events(joined)
         return [p.strip() for p in value if p.strip()]
     if kind == "repos":
-        if not isinstance(value, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in value.items()):
-            raise _bad_type(key, path, "a mapping of label to owner/repo", value)
-        out: dict[str, str] = {}
-        for label, repo in value.items():
-            name, repo = label.strip().lower(), repo.strip()
+        return _repos_from_file(key, value, path)[0]
+    raise AssertionError(kind)
+
+
+def _repos_from_file(key: str, value: object, path: Path | None) -> tuple[dict[str, str], dict[str, dict[str, object]]]:
+    """Labels and per-repository overrides from the file's `repos:` mapping."""
+    if not isinstance(value, dict) or not all(isinstance(k, str) for k in value):
+        raise _bad_type(key, path, "a mapping of label to owner/repo", value)
+    kinds = {k: kind for k, _d, kind in _SETTINGS}
+    labels: dict[str, str] = {}
+    overrides: dict[str, dict[str, object]] = {}
+    for label, entry in value.items():
+        name = label.strip().lower()
+        if isinstance(entry, dict):
+            repo = entry.get("repo")
+            if not isinstance(repo, str) or not name or not is_repo(repo.strip()):
+                raise ConfigError(f"repos entry {label!r} in {path} needs `repo: owner/repo`, got {repo!r}")
+            repo = repo.strip()
+            found: dict[str, object] = {}
+            for k, v in entry.items():
+                if k == "repo":
+                    continue
+                if k not in REPO_OVERRIDE_KEYS:
+                    raise ConfigError(
+                        f"repos entry {label!r} ({repo}): {k!r} can't be set per repository; "
+                        f"allowed keys: {', '.join(REPO_OVERRIDE_KEYS)}"
+                    )
+                found[k] = _from_file(f"repos.{label}.{k}", kinds[k], v, path)
+        elif isinstance(entry, str):
+            repo, found = entry.strip(), {}
             if not name or not is_repo(repo):
                 raise ConfigError(f"repos entry {label!r}: {repo!r} in {path} must look like 'label: owner/repo'")
-            if name in out:
-                raise ConfigError(f"repos in {path} lists the label {label!r} twice")
-            out[name] = repo
-        return out
-    raise AssertionError(kind)
+        else:
+            raise _bad_type(key, path, "a mapping of label to owner/repo", value)
+        if name in labels:
+            raise ConfigError(f"repos in {path} lists the label {label!r} twice")
+        labels[name] = repo
+        if found:
+            if repo in overrides:
+                raise ConfigError(f"repos in {path} sets overrides for {repo} more than once")
+            overrides[repo] = found
+    return labels, overrides
+
+
+def _file_repo_overrides(env: Mapping[str, str]) -> dict[str, dict[str, object]]:
+    data, path = load_config_file(env)
+    if data.get("repos") is None:
+        return {}
+    return _repos_from_file("repos", data["repos"], path)[1]
+
+
+def ignored_repo_overrides(env: Mapping[str, str]) -> Path | None:
+    """The config file's path when REPO_LABELS in env makes its per-repository overrides inactive."""
+    if "REPO_LABELS" not in env:
+        return None
+    data, path = load_config_file(env)
+    if path is None or data.get("repos") is None:
+        return None
+    return path if _repos_from_file("repos", data["repos"], path)[1] else None
 
 
 def _from_env(name: str, kind: str, raw: str) -> object:
@@ -509,6 +581,16 @@ def effective_settings(env: Mapping[str, str] | None = None) -> list[tuple[str, 
         else:
             text = str(value).lower() if isinstance(value, bool) else str(value)
         rows.append((key, text, source))
+        if key == "repos" and source == "file":
+            labels = value if isinstance(value, dict) else {}
+            for repo, found in _file_repo_overrides(env).items():
+                label = next(lb for lb, r in labels.items() if r == repo)
+                for k, v in found.items():
+                    if isinstance(v, list):
+                        shown = ",".join(v)
+                    else:
+                        shown = str(v).lower() if isinstance(v, bool) else str(v)
+                    rows.append((f"repos.{label}.{k}", shown, "file"))
     for name in _DISPLAY_SECRETS:
         is_set = bool(env.get(name))
         rows.append((name.lower(), "set" if is_set else "not set", "env" if is_set else "default"))

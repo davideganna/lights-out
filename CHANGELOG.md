@@ -13,6 +13,17 @@ All notable changes to lights-out are documented here. The format follows
   self-contained page with no network assets.
 
 ### Added
+- Per-repository settings: a `repos:` entry in `lights-out.yaml` can be a mapping with `repo:` plus overrides of
+  `base_branch`, `check_command`, `check_timeout_s`, `ci_timeout_s`, `human_review_paths`,
+  `max_auto_merge_lines`, `max_ticket_usd` and `merge_without_ci`. Other keys are a config error. The pipeline,
+  revisions, workspaces, the PR watcher, `doctor` and `bootstrap` use the card's repository settings.
+  `REPO_LABELS` in the environment means plain names without overrides (`lights-out config` warns).
+- Evaluation in CI: `.github/workflows/eval.yml` runs `lights-out eval` in Docker on demand (`workflow_dispatch` with
+  `tasks`, `repeat`, `max_usd`) and on same-repository pull requests labelled `run-eval` that change
+  `src/lights_out/agents/` or `src/lights_out/core/config.py` (never on forks or push). It uses the
+  `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) repository secret, uploads the results as an artifact, appends
+  the report to the job summary, posts or updates one PR comment, and fails on a regression against
+  `eval/baseline.json`. `eval/RESULTS.md` is a placeholder for published results, committed by a human.
 - GitHub App authentication as an alternative to `GITHUB_TOKEN`: set `GITHUB_APP_ID` and
   `GITHUB_APP_PRIVATE_KEY_FILE` (both secrets). lights-out mints short-lived installation tokens, asks for a
   current one on every API request and every git command, and commits as `<slug>[bot]` unless `GIT_AUTHOR_*` is

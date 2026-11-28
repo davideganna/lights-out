@@ -51,12 +51,14 @@ def other_checks(monkeypatch, cfg):
             return {"full_name": "o/app", "permissions": {"push": True}, "default_branch": "main"}
 
         def branch_protection(self, branch):
+            PROTECTION.setdefault("branches", []).append(branch)
             result = PROTECTION["value"]
             if isinstance(result, Exception):
                 raise result
             return result
 
     PROTECTION["value"] = _full()
+    PROTECTION["branches"] = []
     monkeypatch.setattr(cli, "TrelloClient", FakeTrello)
     monkeypatch.setattr(cli, "GitHubClient", FakeGitHub)
 
@@ -375,3 +377,11 @@ def test_bot_author_malformed_response_returns_false(cfg, capsys):
 
     assert cli._set_bot_author(cfg, Malformed()) is False
     assert "GitHub App error" in capsys.readouterr().err
+
+
+def test_doctor_checks_the_repositorys_own_base_branch(cfg, capsys):
+    cfg.repo_overrides = {"o/app": {"base_branch": "develop"}}
+    PROTECTION["value"] = _full(protected=False)
+    assert cli.cmd_doctor(cfg) == 1
+    assert PROTECTION["branches"] == ["develop"]
+    assert "develop" in capsys.readouterr().out
