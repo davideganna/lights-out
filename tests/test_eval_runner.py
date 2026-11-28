@@ -39,7 +39,7 @@ class EvalAgents:
 
 
 def factory(**kw):
-    return lambda transcript_dir, budget: EvalAgents(**kw)
+    return lambda transcript_dir, budget, repo_cfg: EvalAgents(**kw)
 
 
 @pytest.fixture
@@ -158,7 +158,7 @@ async def test_proceed_expected_but_needs_info_fails(tmp_path, sample, cfg):
 
 
 async def test_exception_becomes_error_outcome(tmp_path, sample, cfg):
-    def boom(d, b):
+    def boom(d, b, c):
         raise RuntimeError("no agents today")
 
     r = await run_task(make_task(tmp_path), cfg, sample, boom)

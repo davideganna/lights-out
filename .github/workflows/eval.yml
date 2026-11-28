@@ -1,0 +1,136 @@
+# The evaluation suite makes real Claude calls: a full run costs real money (roughly a dollar or more per task).
+# That is why this workflow never runs on push, and never on pull requests from forks.
+name: Eval
+
+on:
+  workflow_dispatch:
+    inputs:
+      tasks:
+        description: "comma-separated task ids (default: all)"
+        type: string
+        required: false
+        default: ""
+      repeat:
+        description: "runs per task"
+        type: string
+        default: "1"
+      max_usd:
+        description: "stop starting new tasks once this much has been spent"
+        type: string
+        default: "30"
+  pull_request:
+    types: [labeled, synchronize]
+    paths:
+      - "src/lights_out/agents/**"
+      - "src/lights_out/core/config.py"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  eval:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (contains(github.event.pull_request.labels.*.name, 'run-eval') &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (github.event.action != 'labeled' || github.event.label.name == 'run-eval'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t lights-out .
+
+      - name: Run eval
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TASKS: ${{ inputs.tasks }}
+          REPEAT: ${{ inputs.repeat || '1' }}
+          MAX_USD: ${{ inputs.max_usd || '30' }}
+        run: |
+          cred=()
+          if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            cred=(-e CLAUDE_CODE_OAUTH_TOKEN)
+          elif [ -n "$ANTHROPIC_API_KEY" ]; then
+            cred=(-e ANTHROPIC_API_KEY)
+          else
+            echo "::error::Set the CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY) repository secret."
+            exit 2
+          fi
+          args=(eval --out /app/eval-results --repeat "$REPEAT" --max-usd "$MAX_USD")
+          if [ -n "$TASKS" ]; then
+            args+=(--tasks "$TASKS")
+          fi
+          mkdir -p eval-results
+          rc=0
+          docker run --rm "${cred[@]}" -v "$PWD/eval-results:/app/eval-results" lights-out "${args[@]}" || rc=$?
+          # the container writes as root
+          sudo chown -R "$(id -u):$(id -g)" eval-results
+          exit "$rc"
+
+      - name: Compare with baseline
+        id: report
+        run: |
+          has_baseline=no
+          if python3 -c 'import json,sys; sys.exit(0 if json.load(open("eval/baseline.json")).get("tasks") else 1)' 2>/dev/null; then
+            has_baseline=yes
+          fi
+          if [ "$has_baseline" = "yes" ]; then
+            set +e
+            docker run --rm -v "$PWD/eval-results:/app/eval-results" lights-out eval-report /app/eval-results --baseline eval/baseline.json --markdown /app/eval-results/report.md
+            code=$?
+            set -e
+            sudo chown -R "$(id -u):$(id -g)" eval-results
+          else
+            code=0
+            echo "No baseline exists yet (eval/baseline.json has no results), so nothing was compared." | tee -a eval-results/report.md
+          fi
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: eval-results/
+          if-no-files-found: ignore
+
+      - name: Job summary
+        if: always()
+        run: |
+          if [ -f eval-results/report.md ]; then
+            cat eval-results/report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No report produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: PR comment
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          {
+            echo "<!-- lights-out-eval -->"
+            if [ -f eval-results/report.md ]; then cat eval-results/report.md; else echo "No report produced."; fi
+          } > comment.md
+          id=$(gh api "repos/${{ github.repository }}/issues/$PR/comments" --paginate \
+            --jq '[.[] | select(.body | contains("<!-- lights-out-eval -->"))][0].id // empty' | head -n1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$id" -F body=@comment.md
+          else
+            gh api -X POST "repos/${{ github.repository }}/issues/$PR/comments" -F body=@comment.md
+          fi
+
+      - name: Fail on regression
+        if: always()
+        env:
+          EXIT_CODE: ${{ steps.report.outputs.exit_code }}
+        run: |
+          if [ "${EXIT_CODE:-1}" != "0" ]; then
+            echo "::error::Eval regression against eval/baseline.json (or the report step did not run)."
+            exit 1
+          fi
