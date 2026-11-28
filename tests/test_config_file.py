@@ -220,7 +220,8 @@ def test_config_command_bad_file_exits_2(env, tmp_path, capsys):
 
 def test_effective_settings_covers_every_field(env):
     keys = {k for k, _, _ in effective_settings({})}
-    expected = {f.name for f in fields(Config)} - {"repo_labels", "repo_overrides", "lists"} | {"repos"}
+    skipped = {"repo_labels", "repo_overrides", "lists", "git_author_configured"}
+    expected = {f.name for f in fields(Config)} - skipped | {"repos"}
     expected = {k for k in expected if k not in FILE_SECRET_KEYS}
     assert expected <= keys
 
@@ -242,11 +243,20 @@ def test_example_file(env):
             "default_repo",
             "data_dir",
             "agent_user",
+            "git_author_configured",  # derived: the example file does set the author
         ):
             continue
         assert getattr(cfg, f.name) == getattr(default, f.name), f.name
     assert cfg.human_review_paths == list(DEFAULT_HUMAN_REVIEW_PATHS)
     assert cfg.repo_labels == {"my-app": "your-org/my-app"}
+
+
+def test_github_app_id_in_file_is_a_secret_error(env, tmp_path):
+    path = tmp_path / "c.yaml"
+    path.write_text("github_app_id: '1'\n")
+    env.setenv("LIGHTS_OUT_CONFIG", str(path))
+    with pytest.raises(ConfigError, match="move it to .env"):
+        load()
 
 
 # --- per-repository overrides ---------------------------------------------------------------------
@@ -361,8 +371,10 @@ def test_env_labels_without_file_overrides_do_not_warn(env, tmp_path, capsys):
 def test_cli_workspace_uses_repo_base_branch(env, tmp_path):
     from lights_out.cli import _workspace
     from lights_out.core.routing import Route
+    from lights_out.integrations.github_auth import StaticTokenProvider
 
     write(env, tmp_path, REPOS_FILE)
     cfg = load()
-    assert _workspace(cfg, "x", Route("web", "acme/web")).base_branch == "develop"
-    assert _workspace(cfg, "y", Route("lights-out", "davideganna/lights-out")).base_branch == "main"
+    provider = StaticTokenProvider("t")
+    assert _workspace(cfg, "x", Route("web", "acme/web"), provider).base_branch == "develop"
+    assert _workspace(cfg, "y", Route("lights-out", "davideganna/lights-out"), provider).base_branch == "main"

@@ -11,6 +11,7 @@ import base64
 import os
 import shutil
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,7 +62,7 @@ class Workspace:
         *,
         repo_url: str,
         base_branch: str,
-        github_token: str,
+        github_token: str | Callable[[], str],
         agent_user: str = "",
         author_name: str = "lights-out",
         author_email: str = "lights-out@users.noreply.github.com",
@@ -71,13 +72,14 @@ class Workspace:
         self.base_branch = base_branch
         self.agent_user = agent_user
         self.author = (author_name, author_email)
-        self._token = github_token
+        self._token = (lambda: github_token) if isinstance(github_token, str) else github_token
 
     # --- git helpers -------------------------------------------------------
     def _git_env(self) -> dict[str, str]:
         env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-        if self._token and self.repo_url.startswith("https://github.com/"):
-            basic = base64.b64encode(f"x-access-token:{self._token}".encode()).decode()
+        token = self._token() if self.repo_url.startswith("https://github.com/") else ""
+        if token:
+            basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
             # Passed via env (not argv) so other users can't read it from /proc/*/cmdline.
             env.update(
                 {

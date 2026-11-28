@@ -75,3 +75,75 @@ def test_max_pr_revisions_default_and_override(env, monkeypatch):
     assert load().max_pr_revisions == 3
     monkeypatch.setenv("MAX_PR_REVISIONS", "5")
     assert load().max_pr_revisions == 5
+
+
+# --- GitHub App settings ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def app_env(env, tmp_path):
+    key = tmp_path / "app.pem"
+    key.write_text("pem")
+    env.delenv("GITHUB_TOKEN")
+    for k in ("GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY_FILE", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL"):
+        env.delenv(k, raising=False)
+    env.setenv("GITHUB_APP_ID", "123")
+    env.setenv("GITHUB_APP_PRIVATE_KEY_FILE", str(key))
+    return env
+
+
+def test_app_alone_is_ok(app_env):
+    cfg = load()
+    assert cfg.uses_github_app and cfg.github_app_id == "123" and cfg.github_token == ""
+
+
+def test_only_app_id_is_an_error(app_env):
+    app_env.delenv("GITHUB_APP_PRIVATE_KEY_FILE")
+    with pytest.raises(ConfigError, match="GITHUB_APP_PRIVATE_KEY_FILE"):
+        load()
+
+
+def test_only_key_file_is_an_error(app_env):
+    app_env.delenv("GITHUB_APP_ID")
+    with pytest.raises(ConfigError, match="GITHUB_APP_ID"):
+        load()
+
+
+def test_app_and_token_is_an_error(app_env):
+    app_env.setenv("GITHUB_TOKEN", "x")
+    with pytest.raises(ConfigError, match="pick one"):
+        load()
+
+
+def test_missing_key_file_is_an_error(app_env, tmp_path):
+    app_env.setenv("GITHUB_APP_PRIVATE_KEY_FILE", str(tmp_path / "nope.pem"))
+    with pytest.raises(ConfigError, match="existing file"):
+        load()
+
+
+def test_no_app_and_no_token_is_an_error(app_env):
+    app_env.delenv("GITHUB_APP_ID")
+    app_env.delenv("GITHUB_APP_PRIVATE_KEY_FILE")
+    with pytest.raises(ConfigError, match="GITHUB_TOKEN"):
+        load()
+
+
+def test_personal_token_path_unchanged(env):
+    env.delenv("GITHUB_APP_ID", raising=False)
+    env.delenv("GITHUB_APP_PRIVATE_KEY_FILE", raising=False)
+    cfg = load()
+    assert not cfg.uses_github_app and cfg.github_token == "x"
+
+
+def test_app_variables_are_scrubbed(app_env):
+    import os
+
+    Config.from_env()
+    assert "GITHUB_APP_ID" not in os.environ
+    assert "GITHUB_APP_PRIVATE_KEY_FILE" not in os.environ
+
+
+def test_git_author_configured(app_env):
+    assert load().git_author_configured is False
+    app_env.setenv("GIT_AUTHOR_NAME", "Me")
+    assert load().git_author_configured is True

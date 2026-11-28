@@ -24,6 +24,11 @@ All notable changes to lights-out are documented here. The format follows
   `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) repository secret, uploads the results as an artifact, appends
   the report to the job summary, posts or updates one PR comment, and fails on a regression against
   `eval/baseline.json`. `eval/RESULTS.md` is a placeholder for published results, committed by a human.
+- GitHub App authentication as an alternative to `GITHUB_TOKEN`: set `GITHUB_APP_ID` and
+  `GITHUB_APP_PRIVATE_KEY_FILE` (both secrets). lights-out mints short-lived installation tokens, asks for a
+  current one on every API request and every git command, and commits as `<slug>[bot]` unless `GIT_AUTHOR_*` is
+  set. `doctor` shows the auth mode, the App slug and whether it is installed on each repository. Setting only
+  one App variable, or the App together with `GITHUB_TOKEN`, is a config error.
 - Config file: an optional `lights-out.yaml` (path in `LIGHTS_OUT_CONFIG`) holds every non-secret setting, with
   `lists:` for the Trello column names and `repos:` for the label → repository mapping. An environment variable
   wins over the file, and the file over the built-in default, so `.env`-only setups work unchanged. Secrets in
