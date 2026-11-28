@@ -46,8 +46,8 @@ def other_checks(monkeypatch, cfg):
         def __init__(self, *a):
             pass
 
-        def _req(self, method, path):
-            return {"full_name": "o/app", "permissions": {"push": True}, "default_branch": "main"}
+        def repo_access(self):
+            return "o/app", True, "main"
 
         def branch_protection(self, branch):
             PROTECTION.setdefault("branches", []).append(branch)

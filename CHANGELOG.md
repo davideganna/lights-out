@@ -13,6 +13,10 @@ All notable changes to lights-out are documented here. The format follows
   self-contained page with no network assets.
 
 ### Added
+- `lights-out init [--out DIR] [--force]`: interactive setup. It checks the Trello, GitHub and Claude credentials as
+  they are entered, lets you pick the board and repositories, writes `.env` (mode 600) and `lights-out.yaml`, and
+  offers to create the board columns and labels and to bootstrap empty repositories. `docker-compose.yml` no longer
+  requires `.env` to exist (Compose 2.24+).
 - Per-repository settings: a `repos:` entry in `lights-out.yaml` can be a mapping with `repo:` plus overrides of
   `base_branch`, `check_command`, `check_timeout_s`, `ci_timeout_s`, `human_review_paths`,
   `max_auto_merge_lines`, `max_ticket_usd` and `merge_without_ci`. Other keys are a config error. The pipeline,
