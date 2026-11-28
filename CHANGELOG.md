@@ -13,6 +13,12 @@ All notable changes to lights-out are documented here. The format follows
   self-contained page with no network assets.
 
 ### Added
+- Evaluation in CI: `.github/workflows/eval.yml` runs `lights-out eval` in Docker on demand (`workflow_dispatch` with
+  `tasks`, `repeat`, `max_usd`) and on same-repository pull requests labelled `run-eval` that change
+  `src/lights_out/agents/` or `src/lights_out/core/config.py` (never on forks or push). It uses the
+  `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) repository secret, uploads the results as an artifact, appends
+  the report to the job summary, posts or updates one PR comment, and fails on a regression against
+  `eval/baseline.json`. `eval/RESULTS.md` is a placeholder for published results, committed by a human.
 - Config file: an optional `lights-out.yaml` (path in `LIGHTS_OUT_CONFIG`) holds every non-secret setting, with
   `lists:` for the Trello column names and `repos:` for the label → repository mapping. An environment variable
   wins over the file, and the file over the built-in default, so `.env`-only setups work unchanged. Secrets in

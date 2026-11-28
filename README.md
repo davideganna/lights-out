@@ -289,6 +289,17 @@ evaluation completes, whatever the pass rate. A task is a directory with `task.t
 optional `setup.patch` and an optional `solution.patch` (a reference solution used only by the repository's own
 tests and never shown to agents); see the existing ones.
 
+### In CI
+
+Published results: [`eval/RESULTS.md`](eval/RESULTS.md).
+
+- **Manually:** Actions → Eval → Run workflow, with the inputs `tasks`, `repeat` and `max_usd`.
+- **`run-eval` label:** on same-repository PRs that change `src/lights_out/agents/` or `src/lights_out/core/config.py`,
+  the eval runs when the label is added and on each new push while it stays on. It never runs on forks. It posts or
+  updates one PR comment with the report and fails on a regression against `eval/baseline.json`.
+- **Repository secret:** add `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY` as a fallback).
+- **Cost:** a full run costs real money (roughly a dollar or more per task), so it never runs on every push.
+
 ## Development
 
 `make check` runs ruff and the test suite (it creates a local `.venv`). Without a local Python:
