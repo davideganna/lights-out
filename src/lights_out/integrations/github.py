@@ -88,6 +88,22 @@ class GitHubClient:
             raise GitHubError(f"GitHub {method} {path} -> {r.status_code}: {r.text[:300]}", status=r.status_code)
         return r.json() if r.content else None
 
+    def repo_access(self) -> tuple[str, bool, str]:
+        """(full_name, token can push, default branch) of the repository."""
+        repo = self._req("GET", f"/repos/{self.repo}")
+        return repo["full_name"], bool(repo.get("permissions", {}).get("push")), repo["default_branch"]
+
+    def is_empty(self) -> bool:
+        """True if the repository has no commits (GitHub answers 409)."""
+        r = self._http.request("GET", f"/repos/{self.repo}/commits", params={"per_page": 1})
+        if r.status_code == 409:
+            return True
+        if r.status_code >= 400:
+            raise GitHubError(
+                f"GitHub GET /repos/{self.repo}/commits -> {r.status_code}: {r.text[:300]}", r.status_code
+            )
+        return False
+
     def create_pr(self, *, head: str, base: str, title: str, body: str) -> PullRequest:
         pr = self._req(
             "POST", f"/repos/{self.repo}/pulls", json={"head": head, "base": base, "title": title, "body": body}
