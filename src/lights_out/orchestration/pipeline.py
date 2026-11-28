@@ -69,7 +69,7 @@ class Pipeline:
         trello: TrelloClient,
         github_factory: Callable[[str], GitHubClient],
         store: Store,
-        agents_factory: Callable[[Path, float], AgentsProtocol],
+        agents_factory: Callable[[Path, float, Config], AgentsProtocol],
         workspace_factory: Callable[[Ticket, Route], Workspace],
         heartbeat: Heartbeat | None = None,
         agent_beat_s: float = AGENT_BEAT_S,
@@ -97,7 +97,10 @@ class Pipeline:
             settings=json.dumps(self.cfg.run_settings()),
         )
         self.heartbeat.set_work(stub.short_id, "start")
-        agents = self.agents_factory(self.cfg.runs_dir / str(run_id), budget_usd)
+        agents = self.agents_factory(
+            self.cfg.runs_dir / str(run_id), min(self.cfg.max_ticket_usd, budget_usd), self.cfg
+        )
+        rcfg = self.cfg
         ws: Workspace | None = None
         stage = "start"
         pr_url: str | None = None  # set once the PR exists, so a later failure alert can link it
@@ -131,6 +134,13 @@ class Pipeline:
                 route = resolve(ticket, self.cfg.repo_labels, self.cfg.default_repo)
             except RoutingError as e:
                 return self._send_back(ticket, run_id, agents.spent_usd, str(e), [])
+            rcfg = self.cfg.for_repo(route.repo)
+            if rcfg is not self.cfg:
+                # The agents' prompts and budget depend on the repository's settings. Nothing has been
+                # spent yet, so swapping the agents is safe.
+                agents = self.agents_factory(
+                    self.cfg.runs_dir / str(run_id), min(rcfg.max_ticket_usd, budget_usd), rcfg
+                )
             self.store.set_repo(run_id, route.repo)
             self.trello.comment(stub.id, f"{BOT} picked this up (run #{run_id}), working on `{route.repo}`.")
             github = self.github_factory(route.repo)
@@ -151,11 +161,13 @@ class Pipeline:
             impl = await agents.implement(ticket, triage.plan, ws.path)
             session, summary = impl.session_id, impl.text
 
-            session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage)
+            session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage, rcfg)
             if not ws.has_changes():
                 raise StageFailed("implement", "The agent finished without changing any files.")
 
-            session, summary, review, flags = await self._review_loop(agents, ws, ticket, session, summary, set_stage)
+            session, summary, review, flags = await self._review_loop(
+                agents, ws, ticket, session, summary, set_stage, rcfg
+            )
 
             set_stage("deliver")
             return await self._deliver(
@@ -170,6 +182,7 @@ class Pipeline:
                 review.summary,
                 triage.plan,
                 flags,
+                rcfg,
                 on_pr,
             )
 
@@ -242,10 +255,11 @@ class Pipeline:
         session: str,
         summary: str,
         set_stage: Callable[[str], None],
+        cfg: Config,
     ) -> tuple[str, str, ReviewResult, list[str]]:
         """Review the diff, sending the coder back with the issues until approved. Returns the final state."""
         lists = self.cfg.lists
-        for round_no in range(self.cfg.max_review_rounds + 1):
+        for round_no in range(cfg.max_review_rounds + 1):
             set_stage(f"review {round_no + 1}")
             self._move(ticket.id, lists.reviewing)
             # Scan the untruncated diff so padding can't hide a deletion from the flags.
@@ -254,19 +268,19 @@ class Pipeline:
             if review.approved:
                 break
             issues = "\n".join(f"- {i}" for i in review.issues) or review.summary
-            if round_no == self.cfg.max_review_rounds:
+            if round_no == cfg.max_review_rounds:
                 raise StageFailed(
                     "review",
-                    f"The reviewer still requested changes after {self.cfg.max_review_rounds} revision rounds.",
+                    f"The reviewer still requested changes after {cfg.max_review_rounds} revision rounds.",
                     issues,
                 )
             set_stage(f"revise {round_no + 1}")
             self._move(ticket.id, lists.in_progress)
             fix = await agents.follow_up(
-                session, prompts.FIX_REVIEW.format(issues=issues, check_command=self.cfg.check_command), ws.path
+                session, prompts.FIX_REVIEW.format(issues=issues, check_command=cfg.check_command), ws.path
             )
             session, summary = fix.session_id, fix.text
-            session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage)
+            session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage, cfg)
         return session, summary, review, flags
 
     async def revise(self, run: Run, pr: PRState, feedback: list[PRFeedback]) -> Outcome:
@@ -274,7 +288,8 @@ class Pipeline:
         except to propagate cancellation."""
         lists = self.cfg.lists
         day = today()
-        budget = min(self.cfg.max_ticket_usd, self.cfg.max_day_usd - self.store.day_cost(day))
+        rcfg = self.cfg.for_repo(run.repo)
+        budget = min(rcfg.max_ticket_usd, self.cfg.max_day_usd - self.store.day_cost(day))
         run_id = self.store.start(
             day=day,
             card_id=run.card_id,
@@ -288,7 +303,7 @@ class Pipeline:
         for f in feedback:  # before any agent work, so a crash can't loop
             self.store.mark_handled(run.repo, f.kind, f.id, run_id)
         self.heartbeat.set_work(run.card_short_id, "start")
-        agents = self.agents_factory(self.cfg.runs_dir / str(run_id), budget)
+        agents = self.agents_factory(self.cfg.runs_dir / str(run_id), budget, rcfg)
         ws: Workspace | None = None
         stage = "start"
         feedback_md = "\n".join(f"- {f.quote()}" for f in feedback)
@@ -319,13 +334,15 @@ class Pipeline:
             set_stage("implement")
             impl = await agents.revise(ticket, ws.diff_vs_base(), feedback_md, ws.path)
             session, summary = impl.session_id, impl.text
-            session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage)
+            session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage, rcfg)
 
             # Without the feedback the reviewer would reject changes only the maintainer asked for.
             reviewed = dataclasses.replace(
                 ticket, description=f"{ticket.description}\n\n## Maintainer feedback on the PR\n{feedback_md}"
             )
-            session, summary, review, flags = await self._review_loop(agents, ws, reviewed, session, summary, set_stage)
+            session, summary, review, flags = await self._review_loop(
+                agents, ws, reviewed, session, summary, set_stage, rcfg
+            )
 
             set_stage("deliver")
             outcome = await self._deliver(
@@ -340,6 +357,7 @@ class Pipeline:
                 review.summary,
                 "Revision requested on the PR:\n\n" + feedback_md,
                 flags,
+                rcfg,
                 branch=pr.head_ref,
             )
             if outcome.status in ("pr_open", "merged"):
@@ -415,15 +433,16 @@ class Pipeline:
         session: str,
         card_id: str,
         set_stage: Callable[[str], None],
+        cfg: Config,
     ) -> str:
-        cmd = self.cfg.check_command
+        cmd = cfg.check_command
         self._move(card_id, self.cfg.lists.verifying)
-        for attempt in range(self.cfg.max_fix_attempts + 1):
+        for attempt in range(cfg.max_fix_attempts + 1):
             set_stage("checks")
-            result = ws.run_check(cmd, self.cfg.check_timeout_s)
+            result = ws.run_check(cmd, cfg.check_timeout_s)
             if result.ok:
                 return session
-            if attempt == self.cfg.max_fix_attempts:
+            if attempt == cfg.max_fix_attempts:
                 raise StageFailed(
                     "checks",
                     f"`{cmd}` still fails after {attempt} fix attempt(s).",
@@ -468,10 +487,11 @@ class Pipeline:
         review_summary: str,
         plan: str,
         risk_flags: list[str],
+        cfg: Config,
         on_pr: Callable[[str], None] = lambda url: None,
         branch: str | None = None,
     ) -> Outcome:
-        lists, cfg = self.cfg.lists, self.cfg
+        lists = self.cfg.lists
         branch = branch or ticket.branch
         ci_fixes = 0
         rebases = 0
@@ -528,7 +548,7 @@ class Pipeline:
                     return Outcome("pr_open", summary=summary, pr_url=pr.url, error=reason)
                 if ws.base_moved():
                     session, summary, review_summary, risk_flags, rebases = await self._rebase(
-                        ticket, ws, agents, session, set_stage, summary, review_summary, risk_flags, rebases
+                        ticket, ws, agents, session, set_stage, summary, review_summary, risk_flags, rebases, cfg
                     )
                     continue
                 try:
@@ -537,7 +557,7 @@ class Pipeline:
                     if e.status in (405, 409) and not merge_retry_used:
                         merge_retry_used = True
                         session, summary, review_summary, risk_flags, rebases = await self._rebase(
-                            ticket, ws, agents, session, set_stage, summary, review_summary, risk_flags, rebases
+                            ticket, ws, agents, session, set_stage, summary, review_summary, risk_flags, rebases, cfg
                         )
                         continue
                     raise
@@ -557,7 +577,7 @@ class Pipeline:
                     session, prompts.FIX_CI.format(logs=logs, check_command=cfg.check_command), ws.path
                 )
                 session, summary = fix.session_id, fix.text
-                session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage)
+                session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage, cfg)
                 set_stage(f"ci review {ci_fixes}")
                 self._move(ticket.id, lists.reviewing)
                 flags = find_risk_flags(ws.diff_vs_base(limit=10**9))
@@ -599,6 +619,7 @@ class Pipeline:
         review_summary: str,
         risk_flags: list[str],
         rebases: int,
+        cfg: Config,
     ) -> tuple[str, str, str, list[str], int]:
         """Rebase onto the moved base branch and re-check. Returns the updated state (and rebase count)."""
         if rebases >= MAX_REBASES:
@@ -615,7 +636,7 @@ class Pipeline:
             fix = await agents.follow_up(
                 session,
                 prompts.RESOLVE_CONFLICTS.format(
-                    files="\n".join(f"- {f}" for f in conflicts), check_command=self.cfg.check_command
+                    files="\n".join(f"- {f}" for f in conflicts), check_command=cfg.check_command
                 ),
                 ws.path,
             )
@@ -641,7 +662,7 @@ class Pipeline:
                     "The rebase hit conflicts again on a later commit.",
                     "\n".join(f"- {f}" for f in again),
                 )
-        session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage)
+        session = await self._make_checks_pass(agents, ws, session, ticket.id, set_stage, cfg)
         if conflicts:
             set_stage("rebase review")
             self._move(ticket.id, self.cfg.lists.reviewing)

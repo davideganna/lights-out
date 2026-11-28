@@ -26,7 +26,7 @@ from ..reporting.store import Store
 from .fakes import LocalGitHub, MemoryTracker
 from .tasks import Task
 
-AgentsFactory = Callable[[Path, float], AgentsProtocol]
+AgentsFactory = Callable[[Path, float, Config], AgentsProtocol]
 _IGNORED = shutil.ignore_patterns(".venv", "__pycache__", ".pytest_cache", ".ruff_cache", "*.egg-info", ".git")
 _TAIL = 3000
 
@@ -162,7 +162,7 @@ async def run_task(
             cast(TrelloClient, MemoryTracker(ticket)),
             github_factory=lambda repo: cast(GitHubClient, LocalGitHub()),
             store=store,
-            agents_factory=agents_factory or (lambda d, b: ClaudeAgents(cfg, d, b)),
+            agents_factory=agents_factory or (lambda d, b, c: ClaudeAgents(c, d, b)),
             workspace_factory=lambda t, route: Workspace(
                 cfg.workspaces_dir / name,
                 repo_url=str(origin),

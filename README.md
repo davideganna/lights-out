@@ -145,7 +145,8 @@ target repository (Settings → Branches → add a branch protection rule, or Se
 4. Don't allow bypassing: tick "Do not allow bypassing the above settings" (or "Include administrators");
    for a ruleset, leave the bypass list empty.
 
-`lights-out doctor` reads both classic protection and active rulesets for `BASE_BRANCH` of every repository
+`lights-out doctor` reads both classic protection and active rulesets for the base branch (each repository's own
+`base_branch` if it overrides it, else `BASE_BRANCH`) of every repository
 in `REPO_LABELS` and `DEFAULT_REPO`:
 
 - Problems (exit 1): no protection, no required status checks, or force pushes allowed.
@@ -195,6 +196,25 @@ path is fine; a missing file at an explicit `LIGHTS_OUT_CONFIG` is a config erro
 - Keys are the setting names in lower case: `max_day_usd`, `check_command`, `base_branch`, …
 - `lists:` maps the stages to Trello list names (`ready: Queued`; the `LIST_*` variables).
 - `repos:` maps labels to repositories (`lights-out: davideganna/lights-out`; `REPO_LABELS`).
+- A `repos:` entry is either a plain `owner/repo` or a mapping with `repo:` plus per-repository overrides:
+
+  ```yaml
+  repos:
+    lights-out: davideganna/lights-out
+    web:
+      repo: acme/web
+      base_branch: develop
+      check_command: npm run check
+      human_review_paths: ["migrations/**", ".github/**"]
+      max_auto_merge_lines: 200
+      merge_without_ci: false
+  ```
+
+  Only `base_branch`, `check_command`, `check_timeout_s`, `ci_timeout_s`, `human_review_paths`,
+  `max_auto_merge_lines`, `max_ticket_usd` and `merge_without_ci` can be overridden; any other key is a config
+  error. Two entries for the same repository can't both have overrides. If `REPO_LABELS` is set in the
+  environment, it wins: its repositories have no overrides, and `lights-out config` warns that the file's are
+  ignored. `lights-out config` shows the overrides as `repos.<label>.<key>` lines.
 - `allowed_members`, `human_review_paths` and `alert_events` are YAML lists.
 - **Precedence:** an environment variable, if set (even empty), wins over the file, and the file wins over
   the built-in default. Existing `.env`-only setups keep working unchanged.

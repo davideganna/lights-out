@@ -5,12 +5,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
 from .agents.agents import ClaudeAgents, check_claude
-from .core.config import Config, ConfigError, effective_settings
+from .core.config import Config, ConfigError, effective_settings, ignored_repo_overrides
 from .core.routing import Route
 from .integrations.alerts import Alerter
 from .integrations.github import GitHubClient
@@ -28,7 +29,7 @@ def _workspace(cfg: Config, name: str, route: Route) -> Workspace:
     return Workspace(
         cfg.workspaces_dir / name,
         repo_url=route.url,
-        base_branch=cfg.base_branch,
+        base_branch=cfg.for_repo(route.repo).base_branch,
         github_token=cfg.github_token,
         agent_user=cfg.agent_user,
         author_name=cfg.git_author_name,
@@ -46,7 +47,7 @@ def build(cfg: Config) -> tuple[TrelloClient, Store, Scheduler]:
         trello,
         github_factory=lambda repo: GitHubClient(cfg.github_token, repo),
         store=store,
-        agents_factory=lambda transcript_dir, budget: ClaudeAgents(cfg, transcript_dir, budget),
+        agents_factory=lambda transcript_dir, budget, repo_cfg: ClaudeAgents(repo_cfg, transcript_dir, budget),
         workspace_factory=lambda t, route: _workspace(cfg, t.id, route),
         alerter=alerter,
         heartbeat=heartbeat,
@@ -141,7 +142,7 @@ def cmd_doctor(cfg: Config) -> int:
             if not perms.get("push"):
                 ok = False
                 print("  token cannot push to this repository")
-            ok = _doctor_branch_protection(github, cfg.base_branch) and ok
+            ok = _doctor_branch_protection(github, cfg.for_repo(repo_name).base_branch) and ok
         except Exception as e:  # noqa: BLE001
             ok = False
             print(f"GitHub [{label}]: {repo_name} FAILED: {e}")
@@ -212,6 +213,12 @@ def cmd_config() -> int:
         return 2
     for key, value, source in rows:
         print(f"{key} = {value}  [{source}]")
+    ignored = ignored_repo_overrides(os.environ)
+    if ignored is not None:
+        print(
+            f"Warning: REPO_LABELS is set, so the per-repository overrides in {ignored} are ignored",
+            file=sys.stderr,
+        )
     return 0
 
 

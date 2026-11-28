@@ -13,6 +13,11 @@ All notable changes to lights-out are documented here. The format follows
   self-contained page with no network assets.
 
 ### Added
+- Per-repository settings: a `repos:` entry in `lights-out.yaml` can be a mapping with `repo:` plus overrides of
+  `base_branch`, `check_command`, `check_timeout_s`, `ci_timeout_s`, `human_review_paths`,
+  `max_auto_merge_lines`, `max_ticket_usd` and `merge_without_ci`. Other keys are a config error. The pipeline,
+  revisions, workspaces, the PR watcher, `doctor` and `bootstrap` use the card's repository settings.
+  `REPO_LABELS` in the environment means plain names without overrides (`lights-out config` warns).
 - Evaluation in CI: `.github/workflows/eval.yml` runs `lights-out eval` in Docker on demand (`workflow_dispatch` with
   `tasks`, `repeat`, `max_usd`) and on same-repository pull requests labelled `run-eval` that change
   `src/lights_out/agents/` or `src/lights_out/core/config.py` (never on forks or push). It uses the
