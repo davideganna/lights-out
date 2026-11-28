@@ -137,10 +137,9 @@ def cmd_doctor(cfg: Config) -> int:
     for label, repo_name in _targets(cfg):
         github = GitHubClient(cfg.github_token, repo_name)
         try:
-            repo = github._req("GET", f"/repos/{repo_name}")
-            perms = repo.get("permissions", {})
-            print(f"GitHub [{label}]: {repo['full_name']} (push={perms.get('push')}, default={repo['default_branch']})")
-            if not perms.get("push"):
+            full_name, push, default_branch = github.repo_access()
+            print(f"GitHub [{label}]: {full_name} (push={push}, default={default_branch})")
+            if not push:
                 ok = False
                 print("  token cannot push to this repository")
             ok = _doctor_branch_protection(github, cfg.for_repo(repo_name).base_branch) and ok
@@ -163,6 +162,23 @@ def cmd_doctor(cfg: Config) -> int:
         print(f"Claude: FAILED: {e}")
     print("OK" if ok else "Problems found")
     return 0 if ok else 1
+
+
+def setup_board(cfg: Config) -> tuple[list[str], list[str]]:
+    """Create the missing Trello lists and repository labels; returns (lists, labels) created."""
+    trello = TrelloClient(cfg.trello_api_key, cfg.trello_token, cfg.trello_board_id)
+    return trello.ensure_lists(cfg.lists.all()), trello.ensure_labels(sorted(cfg.repo_labels))
+
+
+def bootstrap(cfg: Config, label: str, repo: str) -> bool:
+    """Give an empty repository its first commit; False if it already has commits."""
+    return bootstrap_repository(_workspace(cfg, "_bootstrap", Route(label=label, repo=repo)))
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    from .setup_wizard import default_services, run_wizard
+
+    return run_wizard(Path(args.out), args.force, services=default_services(setup_board, bootstrap))
 
 
 def cmd_test_alert(cfg: Config, alerter: Alerter | None = None) -> int:
@@ -239,6 +255,9 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument("--repeat", type=int, default=1, help="runs per task (default 1)")
     ev.add_argument("--out", default="", help="output directory (default eval-results/<UTC timestamp>)")
     ev.add_argument("--max-usd", type=float, default=30.0, help="stop before a task once this much is spent")
+    init = sub.add_parser("init", help="interactive setup: check credentials, write .env and lights-out.yaml")
+    init.add_argument("--out", default=".", help="directory for .env and lights-out.yaml (default: current)")
+    init.add_argument("--force", action="store_true", help="overwrite existing files")
     sub.add_parser("config", help="print the effective configuration and where each value comes from")
     sub.add_parser("report", help="regenerate today's HTML report")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -250,6 +269,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     if args.command == "eval":  # needs no Trello or GitHub configuration
         return cmd_eval(args)
+    if args.command == "init":  # runs before any configuration exists
+        return cmd_init(args)
     if args.command == "config":  # needs no credentials
         return cmd_config()
     try:
@@ -263,10 +284,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "test-alert":
         return cmd_test_alert(cfg)
     if args.command == "setup-board":
-        trello = TrelloClient(cfg.trello_api_key, cfg.trello_token, cfg.trello_board_id)
-        created = trello.ensure_lists(cfg.lists.all())
+        created, labels = setup_board(cfg)
         print(f"Created lists: {created}" if created else "All lists already exist.")
-        labels = trello.ensure_labels(sorted(cfg.repo_labels))
         print(f"Created labels: {labels}" if labels else "All repository labels already exist.")
         return 0
     if args.command == "bootstrap":
@@ -275,7 +294,7 @@ def main(argv: list[str] | None = None) -> int:
         except ConfigError as e:
             print(f"Configuration error: {e}", file=sys.stderr)
             return 2
-        done = bootstrap_repository(_workspace(cfg, "_bootstrap", route))
+        done = bootstrap(cfg, route.label, route.repo)
         print("Pushed the initial commit." if done else "Repository already has commits; nothing to do.")
         return 0
 

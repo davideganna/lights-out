@@ -60,6 +60,8 @@ The phases are in priority order. Each item is a candidate ticket.
       budgets, check command
 - [x] Pre-built image on GHCR and tagged releases
 - [ ] `lights-out init`: interactive setup that checks credentials, creates board columns and
+- [ ] Pre-built image on GHCR and tagged releases
+- [x] `lights-out init`: interactive setup that checks credentials, creates board columns and
       bootstraps the target repository
 - [ ] Hosted mode: Trello/Jira webhooks instead of polling, plus a deployment recipe for a small VPS
 - [ ] Documentation site: quick start, configuration reference, security model, writing good cards

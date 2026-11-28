@@ -157,6 +157,10 @@ class TrelloClient:
             self._me = self._req("GET", "/members/me", params={"fields": "username"})["username"].lower()
         return self._me
 
+    def boards(self) -> list[dict]:
+        """The member's open boards (id, name, url)."""
+        return self._req("GET", "/members/me/boards", params={"filter": "open", "fields": "name,url"}) or []
+
     def move(self, card_id: str, list_name: str, *, top: bool = True) -> None:
         self._req(
             "PUT", f"/cards/{card_id}", params={"idList": self.list_id(list_name), "pos": "top" if top else "bottom"}

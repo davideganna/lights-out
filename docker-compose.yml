@@ -2,7 +2,9 @@ services:
   lights-out:
     image: ghcr.io/davideganna/lights-out:latest
     build: .
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false  # `init` runs before .env exists (needs Compose 2.24+)
     volumes:
       - agent-data:/data
       # Compose can't make a bind mount optional (a missing source becomes a directory), so enable this

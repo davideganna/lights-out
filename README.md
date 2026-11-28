@@ -155,6 +155,24 @@ in `REPO_LABELS` and `DEFAULT_REPO`:
 
 ## Setup
 
+Quick start (needs Docker Compose 2.24 or newer):
+
+1. `docker compose build`
+2. `docker compose run --rm -it -v "$PWD:/out" lights-out init --out /out` walks you through the setup. It asks for
+   your Trello key and token and picks the board, asks for a GitHub token and the repositories (with a Trello
+   label each), asks for the Claude credential, and checks each one right away. It then writes `.env` (mode 600,
+   the secrets) and `lights-out.yaml` (everything else), and offers to create the board columns and labels and to
+   bootstrap empty repositories. It refuses to overwrite existing files unless you pass `--force`, and Ctrl-C
+   before the end writes nothing.
+3. In `docker-compose.yml`, uncomment the `./lights-out.yaml:/app/lights-out.yaml:ro` line.
+4. `docker compose run --rm lights-out doctor`
+5. `docker compose up -d`. From then on, moving a card to **Queued** starts the agent.
+   (`docker compose run --rm lights-out run-once` processes what's queued now and exits.)
+
+### Manual setup
+
+Instead of `init`, do it by hand:
+
 1. Credentials: copy `.env.example` to `.env` and fill it in. Other settings can go in `.env` or in
    [`lights-out.yaml`](#configuration-file).
    - `ANTHROPIC_API_KEY`, or `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`.
@@ -282,6 +300,7 @@ them (`doctor` checks this).
 | Module (in `src/lights_out/`) | Role |
 |---|---|
 | `cli.py` | command-line entry point |
+| `setup_wizard.py` | `lights-out init`: interactive setup (checks credentials, writes `.env` and `lights-out.yaml`) |
 | `core/config.py` | env-based configuration, secret scrubbing |
 | `core/models.py` | ticket and comment data models |
 | `integrations/trello.py` | board adapter (cards, comments, moves) |
