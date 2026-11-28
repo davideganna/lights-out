@@ -13,6 +13,11 @@ All notable changes to lights-out are documented here. The format follows
   self-contained page with no network assets.
 
 ### Added
+- Releases: pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`. It checks the tag against the version in
+  `pyproject.toml`, runs `make check`, pushes an amd64 and arm64 image to `ghcr.io/<owner>/lights-out` tagged
+  `<version>`, `<major>.<minor>` and `latest`, and creates a GitHub Release with that version's CHANGELOG section
+  (`scripts/changelog_section.py`). Also `lights-out --version`, an `image:` line in `docker-compose.yml`
+  (`docker compose pull` uses the published image) and `RELEASING.md`.
 - `lights-out init [--out DIR] [--force]`: interactive setup. It checks the Trello, GitHub and Claude credentials as
   they are entered, lets you pick the board and repositories, writes `.env` (mode 600) and `lights-out.yaml`, and
   offers to create the board columns and labels and to bootstrap empty repositories. `docker-compose.yml` no longer
